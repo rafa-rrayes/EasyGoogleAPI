@@ -5,7 +5,7 @@ This example demonstrates how to use EasyGoogleAPI in a production
 multi-user web application with database-backed token storage.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from easygoogleapi import GoogleService, InMemoryTokenStore
@@ -61,7 +61,7 @@ def example_multi_user_calendar():
                 continue
             
             # List upcoming events
-            start = datetime.now(timezone.utc)
+            start = datetime.now(UTC)
             end = start + timedelta(days=7)
             
             events = google.calendar.list_events(

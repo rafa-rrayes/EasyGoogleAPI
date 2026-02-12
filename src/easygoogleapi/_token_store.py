@@ -116,9 +116,22 @@ class FileTokenStore(TokenStore):
         self._directory.mkdir(parents=True, exist_ok=True)
     
     def _get_token_path(self, user_id: str) -> Path:
-        """Get the file path for a user's token."""
-        # Sanitize user_id to prevent directory traversal
-        safe_user_id = user_id.replace("/", "_").replace("\\", "_")
+        """Get the file path for a user's token.
+        
+        Sanitizes user_id to prevent directory traversal and filesystem issues.
+        """
+        # Robust sanitization: only allow alphanumeric, hyphens, and underscores
+        import re
+        safe_user_id = re.sub(r'[^a-zA-Z0-9_-]', '_', user_id)
+        
+        # Prevent empty user_id after sanitization
+        if not safe_user_id:
+            raise ValueError(f"Invalid user_id: '{user_id}' - no valid characters")
+        
+        # Prevent path components like '..' or '.'
+        if safe_user_id in ('.', '..'):
+            raise ValueError(f"Invalid user_id: '{user_id}' - reserved name")
+        
         return self._directory / f"{safe_user_id}_token.pickle"
     
     def get(self, user_id: str) -> dict[str, Any] | None:
@@ -167,8 +180,22 @@ class JSONFileTokenStore(TokenStore):
         self._directory.mkdir(parents=True, exist_ok=True)
     
     def _get_token_path(self, user_id: str) -> Path:
-        """Get the file path for a user's token."""
-        safe_user_id = user_id.replace("/", "_").replace("\\", "_")
+        """Get the file path for a user's token.
+        
+        Sanitizes user_id to prevent directory traversal and filesystem issues.
+        """
+        # Robust sanitization: only allow alphanumeric, hyphens, and underscores
+        import re
+        safe_user_id = re.sub(r'[^a-zA-Z0-9_-]', '_', user_id)
+        
+        # Prevent empty user_id after sanitization
+        if not safe_user_id:
+            raise ValueError(f"Invalid user_id: '{user_id}' - no valid characters")
+        
+        # Prevent path components like '..' or '.'
+        if safe_user_id in ('.', '..'):
+            raise ValueError(f"Invalid user_id: '{user_id}' - reserved name")
+        
         return self._directory / f"{safe_user_id}_token.json"
     
     def get(self, user_id: str) -> dict[str, Any] | None:
