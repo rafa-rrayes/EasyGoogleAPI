@@ -5,6 +5,7 @@ from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import formataddr
 from pathlib import Path
 from typing import Any
 
@@ -23,8 +24,23 @@ class GmailService(BaseService):
         cc: str | list[str] | None = None,
         bcc: str | list[str] | None = None,
         attachments: list[str | Path] | None = None,
+        from_name: str | None = None,
+        reply_to: str | None = None,
     ) -> dict[str, Any]:
-        """Send an email."""
+        """Send an email.
+
+        Args:
+            to: Recipient email address(es).
+            subject: Email subject line.
+            body: Email body text (plain or HTML).
+            html: If ``True``, *body* is treated as HTML.
+            cc: CC recipient(s).
+            bcc: BCC recipient(s).
+            attachments: List of file paths to attach.
+            from_name: Display name for the ``From`` header (e.g. ``"My App"``).
+                The email address is filled automatically by Gmail.
+            reply_to: ``Reply-To`` address.
+        """
         if isinstance(to, list):
             to = ", ".join(to)
 
@@ -41,7 +57,8 @@ class GmailService(BaseService):
                 encoders.encode_base64(part)
                 part.add_header(
                     "Content-Disposition",
-                    f"attachment; filename={attachment_path.name}",
+                    "attachment",
+                    filename=attachment_path.name,
                 )
                 message.attach(part)
         else:
@@ -53,6 +70,12 @@ class GmailService(BaseService):
             message["cc"] = cc if isinstance(cc, str) else ", ".join(cc)
         if bcc:
             message["bcc"] = bcc if isinstance(bcc, str) else ", ".join(bcc)
+        if from_name:
+            # formataddr expects (name, address).  We leave address blank so
+            # Gmail fills the authenticated sender address automatically.
+            message["from"] = formataddr((from_name, ""))
+        if reply_to:
+            message["reply-to"] = reply_to
 
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
         request = self._resource.users().messages().send(
@@ -65,17 +88,26 @@ class GmailService(BaseService):
         query: str | None = None,
         label_ids: list[str] | None = None,
         max_results: int = 10,
-    ) -> list[dict[str, Any]]:
-        """List messages matching criteria."""
+        page_token: str | None = None,
+    ) -> dict[str, Any]:
+        """List messages matching criteria.
+
+        Returns a dict with ``messages`` and ``nextPageToken`` keys.
+        """
         kwargs: dict[str, Any] = {"userId": "me", "maxResults": max_results}
         if query:
             kwargs["q"] = query
         if label_ids:
             kwargs["labelIds"] = label_ids
+        if page_token:
+            kwargs["pageToken"] = page_token
 
         request = self._resource.users().messages().list(**kwargs)
         result = self._execute_request(request)
-        return result.get("messages", [])
+        return {
+            "messages": result.get("messages", []),
+            "nextPageToken": result.get("nextPageToken"),
+        }
 
     def get_message(
         self, message_id: str, format: str = "full"

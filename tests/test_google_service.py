@@ -14,7 +14,6 @@ class TestGoogleServiceValidation:
 
     def test_raises_for_invalid_service_name(self, tmp_path):
         """Test that invalid service name raises ValueError."""
-        # Create a dummy credentials file
         creds = {"installed": {"client_id": "xxx", "client_secret": "yyy"}}
         creds_file = tmp_path / "creds.json"
         creds_file.write_text(json.dumps(creds))
@@ -27,14 +26,10 @@ class TestGoogleServiceValidation:
 
     def test_accepts_valid_service_names(self, tmp_path):
         """Test that all valid service names are accepted."""
-        # This test just validates the service name check,
-        # not actual auth (which would fail without real creds)
         creds = {"installed": {"client_id": "xxx", "client_secret": "yyy"}}
         creds_file = tmp_path / "creds.json"
         creds_file.write_text(json.dumps(creds))
 
-        # Should not raise ValueError for service names
-        # (will fail later during auth, but that's expected)
         try:
             GoogleService(
                 credentials_path=creds_file,
@@ -43,10 +38,63 @@ class TestGoogleServiceValidation:
         except ValueError as e:
             if "Unknown services" in str(e):
                 pytest.fail("Valid service names should be accepted")
-            # Other ValueErrors are fine (e.g., from auth)
         except Exception:
-            # Auth failures are expected without real credentials
             pass
+
+    def test_raises_when_both_credentials_path_and_client_config(self, tmp_path):
+        """Test mutual exclusivity of credentials_path and client_config."""
+        creds_file = tmp_path / "creds.json"
+        creds_file.write_text(json.dumps({"installed": {"client_id": "x", "client_secret": "y"}}))
+
+        with pytest.raises(ValueError, match="Cannot specify both"):
+            GoogleService(
+                credentials_path=creds_file,
+                client_config={"web": {"client_id": "a", "client_secret": "b"}},
+                services=["drive"],
+                auto_auth=False,
+            )
+
+    def test_raises_when_neither_credentials_path_nor_client_config(self):
+        """Test that omitting both raises."""
+        with pytest.raises(ValueError, match="must be provided"):
+            GoogleService(services=["drive"], auto_auth=False)
+
+    def test_client_config_creates_instance(self):
+        """Test that client_config can be used as sole credential source."""
+        google = GoogleService(
+            client_config={"web": {"client_id": "x", "client_secret": "y"}},
+            services=["drive"],
+            auto_auth=False,
+        )
+        assert google.credential_type == CredentialType.OAUTH
+        assert google._credentials_path is None
+        assert google._client_config is not None
+
+    def test_client_config_with_token_store(self):
+        """Test client_config with an explicit token store."""
+        from easygoogleapi import InMemoryTokenStore
+
+        store = InMemoryTokenStore()
+        google = GoogleService(
+            client_config={"web": {"client_id": "x", "client_secret": "y"}},
+            services=["calendar"],
+            token_store=store,
+            user_id="u1",
+            auto_auth=False,
+        )
+        assert google.user_id == "u1"
+        assert google._token_store is store
+
+    def test_client_config_defaults_to_in_memory_store(self):
+        """Test that client_config without token_store uses InMemoryTokenStore."""
+        from easygoogleapi import InMemoryTokenStore
+
+        google = GoogleService(
+            client_config={"web": {"client_id": "x", "client_secret": "y"}},
+            services=["drive"],
+            auto_auth=False,
+        )
+        assert isinstance(google._token_store, InMemoryTokenStore)
 
 
 class TestServiceNotEnabled:
@@ -125,5 +173,4 @@ class TestGoogleServiceIntegration:
         """Test that service has raw property for direct API access."""
         raw = google_calendar.calendar.raw
         assert raw is not None
-        # Raw should have the calendarList method
         assert hasattr(raw, "calendarList")

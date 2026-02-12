@@ -2,10 +2,12 @@
 
 import json
 from datetime import datetime
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from easygoogleapi import GoogleService, AuthenticationError
+from easygoogleapi import GoogleService, AuthenticationError, TokenRevokedError
+from easygoogleapi._token_store import InMemoryTokenStore
 from easygoogleapi._types import CredentialType
 
 
@@ -24,7 +26,6 @@ class TestAuthControlUnit:
             auto_auth=False,
         )
 
-        # Should not be authenticated yet
         assert not google.is_authenticated
         assert google._credentials is None
 
@@ -155,6 +156,161 @@ class TestAuthControlUnit:
         scopes.append("fake_scope")
         assert "fake_scope" not in google.scopes
 
+    # ---- New: client_config support ----
+
+    def test_client_config_constructor(self):
+        """Test constructing GoogleService with client_config dict."""
+        google = GoogleService(
+            client_config={"web": {"client_id": "x", "client_secret": "y"}},
+            services=["drive"],
+            auto_auth=False,
+        )
+        assert google.credential_type == CredentialType.OAUTH
+        assert google._credentials_path is None
+
+    def test_client_config_flat_shorthand(self):
+        """Test flat shorthand client_config normalizes to web."""
+        google = GoogleService(
+            client_config={"client_id": "x", "client_secret": "y"},
+            services=["drive"],
+            auto_auth=False,
+        )
+        assert google.credential_type == CredentialType.OAUTH
+
+    def test_get_auth_url_returns_tuple(self, tmp_path):
+        """Test that get_auth_url returns (url, state) tuple."""
+        creds = {"installed": {
+            "client_id": "xxx",
+            "client_secret": "yyy",
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+        }}
+        creds_file = tmp_path / "creds.json"
+        creds_file.write_text(json.dumps(creds))
+
+        google = GoogleService(
+            credentials_path=creds_file,
+            services=["calendar"],
+            auto_auth=False,
+        )
+
+        result = google.get_auth_url(redirect_uri="http://localhost:3000/callback")
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        url, state = result
+        assert url.startswith("https://accounts.google.com/")
+        assert isinstance(state, str)
+        assert len(state) > 0
+
+    def test_exchange_code_saves_to_store(self, tmp_path):
+        """Test that exchange_code persists credentials to the token store."""
+        creds = {"installed": {
+            "client_id": "xxx",
+            "client_secret": "yyy",
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+        }}
+        creds_file = tmp_path / "creds.json"
+        creds_file.write_text(json.dumps(creds))
+
+        store = InMemoryTokenStore()
+        google = GoogleService(
+            credentials_path=creds_file,
+            services=["calendar"],
+            token_store=store,
+            user_id="test_user",
+            auto_auth=False,
+        )
+
+        # Replace the flow with a fully mocked one after get_auth_url
+        google.get_auth_url(redirect_uri="http://localhost:3000/callback")
+
+        mock_creds = MagicMock()
+        mock_creds.token = "fake_token"
+        mock_creds.refresh_token = "fake_refresh"
+        mock_creds.token_uri = "https://oauth2.googleapis.com/token"
+        mock_creds.client_id = "xxx"
+        mock_creds.client_secret = "yyy"
+        mock_creds.scopes = None
+        mock_creds.expiry = None
+
+        mock_flow = MagicMock()
+        mock_flow.credentials = mock_creds
+        google._oauth_flow = mock_flow
+
+        google.exchange_code("fake_code")
+
+        mock_flow.fetch_token.assert_called_once_with(code="fake_code")
+        # Token should be saved in the store
+        assert store.get("test_user") is not None
+        assert store.get("test_user")["token"] == "fake_token"
+
+    def test_custom_scopes_list(self, tmp_path):
+        """Test that custom scopes (list) override default scopes."""
+        creds = {"installed": {"client_id": "xxx", "client_secret": "yyy"}}
+        creds_file = tmp_path / "creds.json"
+        creds_file.write_text(json.dumps(creds))
+
+        custom = ["https://www.googleapis.com/auth/drive.readonly"]
+        google = GoogleService(
+            credentials_path=creds_file,
+            services=["drive"],
+            auto_auth=False,
+            scopes=custom,
+        )
+        assert google.scopes == custom
+
+    def test_custom_scopes_dict(self, tmp_path):
+        """Test that custom scopes (dict) are merged correctly."""
+        creds = {"installed": {"client_id": "xxx", "client_secret": "yyy"}}
+        creds_file = tmp_path / "creds.json"
+        creds_file.write_text(json.dumps(creds))
+
+        custom = {
+            "drive": ["https://www.googleapis.com/auth/drive.readonly"],
+            "calendar": ["https://www.googleapis.com/auth/calendar.readonly"],
+        }
+        google = GoogleService(
+            credentials_path=creds_file,
+            services=["drive", "calendar"],
+            auto_auth=False,
+            scopes=custom,
+        )
+        assert set(google.scopes) == {
+            "https://www.googleapis.com/auth/drive.readonly",
+            "https://www.googleapis.com/auth/calendar.readonly",
+        }
+
+    def test_on_token_refresh_callback(self, tmp_path):
+        """Test that on_token_refresh callback is called on refresh."""
+        creds = {"installed": {"client_id": "xxx", "client_secret": "yyy"}}
+        creds_file = tmp_path / "creds.json"
+        creds_file.write_text(json.dumps(creds))
+
+        callback = MagicMock()
+        google = GoogleService(
+            credentials_path=creds_file,
+            services=["calendar"],
+            auto_auth=False,
+            on_token_refresh=callback,
+        )
+
+        # Manually set credentials that pretend to be valid
+        mock_creds = MagicMock()
+        mock_creds.refresh_token = "fake_refresh"
+        mock_creds.token = "new_token"
+        mock_creds.token_uri = "https://oauth2.googleapis.com/token"
+        mock_creds.client_id = "xxx"
+        mock_creds.client_secret = "yyy"
+        mock_creds.scopes = None
+        mock_creds.expiry = None
+        google._credentials = mock_creds
+
+        with patch("easygoogleapi.refresh_credentials", return_value=mock_creds):
+            google.refresh_token()
+
+        callback.assert_called_once_with(mock_creds)
+
 
 class TestCredentialInfoUnit:
     """Unit tests for credential info properties."""
@@ -228,7 +384,6 @@ class TestAuthControlIntegration:
     def test_token_expiry_is_datetime(self, google_calendar):
         """Test that token_expiry returns a datetime."""
         expiry = google_calendar.token_expiry
-        # OAuth tokens have expiry
         assert expiry is None or isinstance(expiry, datetime)
 
     @pytest.mark.integration
@@ -240,13 +395,12 @@ class TestAuthControlIntegration:
             token_path=token_path,
         )
 
-        # This may or may not actually refresh depending on token state
         result = google.refresh_token()
         assert result is True
 
     @pytest.mark.integration
-    def test_get_auth_url_returns_url(self, credentials_path, tmp_path):
-        """Test that get_auth_url returns a valid URL."""
+    def test_get_auth_url_returns_url_and_state(self, credentials_path, tmp_path):
+        """Test that get_auth_url returns a valid (URL, state) tuple."""
         google = GoogleService(
             credentials_path=credentials_path,
             services=["calendar"],
@@ -254,9 +408,10 @@ class TestAuthControlIntegration:
             auto_auth=False,
         )
 
-        url = google.get_auth_url()
+        url, state = google.get_auth_url()
         assert url.startswith("https://accounts.google.com/")
         assert "client_id=" in url
+        assert isinstance(state, str)
 
     @pytest.mark.integration
     def test_logout_deletes_token(self, credentials_path, tmp_path):
@@ -269,10 +424,8 @@ class TestAuthControlIntegration:
             token_path=token_path,
         )
 
-        # Token should exist after auth
         assert token_path.exists()
 
-        # Logout should delete it
         google.logout()
         assert not token_path.exists()
         assert not google.is_authenticated

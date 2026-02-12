@@ -22,14 +22,26 @@ Multi-user usage:
         credentials_path="oauth_credentials.json",
         services=["calendar", "gmail"]
     )
+
+In-memory client config (no files on disk):
+    from easygoogleapi import GoogleService
+
+    google = GoogleService(
+        client_config={"web": {"client_id": "...", "client_secret": "..."}},
+        services=["drive"],
+        token_store=my_store,
+        user_id="user_123",
+        auto_auth=False,
+    )
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from functools import cached_property
 from pathlib import Path
 
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.exceptions import RefreshError
+from google_auth_oauthlib.flow import Flow, InstalledAppFlow
 from googleapiclient.discovery import build
 
 from ._auth import (
@@ -46,6 +58,7 @@ from ._auth import (
     get_service_account_info,
     load_token,
     load_token_from_store,
+    normalize_client_config,
     refresh_credentials,
     revoke_credentials,
     save_token,
@@ -69,11 +82,13 @@ from ._exceptions import (
     ServerError,
     ServiceNotEnabledError,
     TokenExpiredError,
+    TokenRevokedError,
     TransientError,
 )
 from ._token_store import FileTokenStore, InMemoryTokenStore, JSONFileTokenStore, TokenStore
 from ._types import CredentialType, ServiceName
 from .calendar import CalendarService
+from .contrib.django import DjangoModelTokenStore
 from .docs import DocsService
 from .drive import DriveService
 from .forms import FormsService
@@ -97,11 +112,13 @@ __all__ = [
     "InMemoryTokenStore",
     "FileTokenStore",
     "JSONFileTokenStore",
+    "DjangoModelTokenStore",
     # Exceptions
     "EasyGoogleAPIError",
     "AuthenticationError",
     "InvalidCredentialsError",
     "TokenExpiredError",
+    "TokenRevokedError",
     "ServiceNotEnabledError",
     "APIError",
     "TransientError",
@@ -121,7 +138,7 @@ __all__ = [
     "ServiceName",
 ]
 
-__version__ = "0.2.0"
+__version__ = "1.0.0"
 
 
 class GoogleService:
@@ -134,6 +151,15 @@ class GoogleService:
         google = GoogleService(
             credentials_path="credentials.json",
             services=["calendar", "drive"]
+        )
+
+    In-memory client config (no files on disk):
+        google = GoogleService(
+            client_config={"web": {"client_id": "...", "client_secret": "..."}},
+            services=["drive"],
+            token_store=my_store,
+            user_id="user_123",
+            auto_auth=False,
         )
 
     Multi-user applications:
@@ -153,44 +179,77 @@ class GoogleService:
 
     Args:
         credentials_path: Path to the credentials JSON file (OAuth or service account).
-        services: List of services to enable (e.g., ['calendar', 'drive', 'gmail']).
-        token_path: Custom path for storing OAuth tokens. Defaults to same directory
-                   as credentials with '_token.pickle' suffix.
+            Mutually exclusive with ``client_config``.
+        client_config: In-memory OAuth client configuration dict. Accepts the
+            standard Google format (``{"web": {...}}`` / ``{"installed": {...}}``)
+            or a flat shorthand ``{"client_id": "...", "client_secret": "..."}``.
+            Mutually exclusive with ``credentials_path``.
+        services: List of services to enable (e.g., ``['calendar', 'drive', 'gmail']``).
+        scopes: Custom OAuth scopes. Can be a flat ``list[str]`` applied to all
+            services, or a ``dict[str, list[str]]`` mapping service names to
+            per-service scopes. If ``None`` (default), scopes are derived
+            automatically from the enabled services.
+        token_path: Custom path for storing OAuth tokens. Defaults to same
+            directory as credentials with ``_token.pickle`` suffix.
         token_store: Pluggable token storage backend. If not provided, uses
-                    file-based storage.
+            file-based storage.
         user_id: User identifier for multi-user scenarios. Auto-generated
-                from token_path if not provided.
-        auto_auth: If True (default), authenticate immediately. If False, delay until
-                   authenticate() is called or a service is accessed.
-        oauth_port: Port for OAuth callback server (default: 8080). The redirect URI
-                   will be http://localhost:{port}/
+            from ``token_path`` if not provided.
+        auto_auth: If ``True`` (default), authenticate immediately. If ``False``,
+            delay until ``authenticate()`` is called or a service is accessed.
+        oauth_port: Port for OAuth callback server (default: 8080).
         retry_config: Configuration for retry behavior. Uses defaults if None.
-
-    Example:
-        >>> google = GoogleService(
-        ...     credentials_path="credentials.json",
-        ...     services=["calendar", "drive"]
-        ... )
-        >>> events = google.calendar.list_events()
+        on_token_refresh: Callback invoked after a token is successfully refreshed.
+            Receives the ``Credentials`` object as its only argument.
+        on_token_expired: Callback invoked when a refresh token has been revoked
+            or is otherwise permanently invalid. Receives the raised
+            ``TokenRevokedError`` as its only argument.
     """
 
     def __init__(
         self,
-        credentials_path: str | Path,
-        services: Sequence[ServiceName],
+        credentials_path: str | Path | None = None,
+        services: Sequence[ServiceName] = (),
         token_path: str | Path | None = None,
         token_store: TokenStore | None = None,
         user_id: str | None = None,
         auto_auth: bool = True,
         oauth_port: int = 8080,
         retry_config: RetryConfig | None = None,
+        *,
+        client_config: dict | None = None,
+        scopes: list[str] | dict[str, list[str]] | None = None,
+        on_token_refresh: Callable | None = None,
+        on_token_expired: Callable | None = None,
     ):
-        self._credentials_path = Path(credentials_path).expanduser().resolve()
+        # ------------------------------------------------------------------
+        # Credential source validation
+        # ------------------------------------------------------------------
+        if credentials_path is not None and client_config is not None:
+            raise ValueError(
+                "Cannot specify both 'credentials_path' and 'client_config'. "
+                "Use one or the other."
+            )
+        if credentials_path is None and client_config is None:
+            raise ValueError(
+                "One of 'credentials_path' or 'client_config' must be provided."
+            )
+
+        if credentials_path is not None:
+            self._credentials_path: Path | None = Path(credentials_path).expanduser().resolve()
+            self._client_config: dict | None = None
+        else:
+            self._credentials_path = None
+            self._client_config = normalize_client_config(client_config)
+
         self._enabled_services: list[ServiceName] = list(services)
         self._credentials = None
-        self._oauth_flow: InstalledAppFlow | None = None
+        self._oauth_flow: Flow | InstalledAppFlow | None = None
+        self._oauth_state: str | None = None
         self._oauth_port = oauth_port
         self._retry_config = retry_config or RetryConfig()
+        self._on_token_refresh = on_token_refresh
+        self._on_token_expired = on_token_expired
 
         # Validate services
         invalid = set(services) - set(SERVICE_REGISTRY.keys())
@@ -200,56 +259,79 @@ class GoogleService:
                 f"Valid services: {list(SERVICE_REGISTRY.keys())}"
             )
 
-        # Set up token storage
+        # ------------------------------------------------------------------
+        # Token storage setup
+        # ------------------------------------------------------------------
         if token_store is not None:
-            # New multi-user mode
             self._token_store = token_store
             self._user_id = user_id
             if self._user_id is None:
                 raise ValueError("user_id must be provided when using token_store")
-            self._token_path = None  # Not used in new mode
-        else:
+            self._token_path = None
+        elif self._credentials_path is not None:
             # Legacy single-user mode with file-based storage
             if token_path:
                 self._token_path = Path(token_path).expanduser().resolve()
             else:
-                # Default: credentials.json -> credentials_token.pickle
                 self._token_path = self._credentials_path.with_name(
                     self._credentials_path.stem + "_token.pickle"
                 )
-            
-            # Create FileTokenStore for backwards compatibility
             self._token_store = FileTokenStore(directory=self._token_path.parent)
-            # Use token file stem as user_id for backwards compat
             self._user_id = user_id or self._token_path.stem
+        else:
+            # client_config without explicit token_store → in-memory store
+            self._token_path = None
+            self._token_store = InMemoryTokenStore()
+            self._user_id = user_id or "default"
 
-        # Get combined scopes and detect credential type
-        self._scopes = get_scopes_for_services(self._enabled_services)
-        self._credential_type = detect_credential_type(self._credentials_path)
+        # ------------------------------------------------------------------
+        # Scopes
+        # ------------------------------------------------------------------
+        if scopes is not None:
+            if isinstance(scopes, dict):
+                combined: set[str] = set()
+                for svc, svc_scopes in scopes.items():
+                    combined.update(svc_scopes)
+                self._scopes = list(combined)
+            else:
+                self._scopes = list(scopes)
+        else:
+            self._scopes = get_scopes_for_services(self._enabled_services)
+
+        # ------------------------------------------------------------------
+        # Credential type detection
+        # ------------------------------------------------------------------
+        cred_source = self._credentials_path or self._client_config
+        self._credential_type = detect_credential_type(cred_source)
 
         if auto_auth:
             self.authenticate()
-    
+
     # =========================================================================
     # Factory Methods for Multi-User Support
     # =========================================================================
-    
+
     @classmethod
     def for_user(
         cls,
         user_id: str,
         token_store: TokenStore,
-        credentials_path: str | Path,
-        services: Sequence[ServiceName],
+        credentials_path: str | Path | None = None,
+        services: Sequence[ServiceName] = (),
         auto_auth: bool = True,
         oauth_port: int = 8080,
         retry_config: RetryConfig | None = None,
+        *,
+        client_config: dict | None = None,
+        scopes: list[str] | dict[str, list[str]] | None = None,
+        on_token_refresh: Callable | None = None,
+        on_token_expired: Callable | None = None,
     ) -> "GoogleService":
         """Create GoogleService for a specific user with OAuth.
-        
+
         Use this factory method for multi-user web applications where each
         user has their own OAuth token.
-        
+
         Args:
             user_id: Unique identifier for the user.
             token_store: Token storage backend (database, Redis, etc.).
@@ -258,22 +340,13 @@ class GoogleService:
             auto_auth: If True, authenticate immediately.
             oauth_port: Port for OAuth callback (for initial auth).
             retry_config: Configuration for retry behavior.
-            
+            client_config: In-memory client config (alternative to credentials_path).
+            scopes: Custom OAuth scopes.
+            on_token_refresh: Callback after successful token refresh.
+            on_token_expired: Callback when refresh token is revoked.
+
         Returns:
             GoogleService instance configured for the user.
-            
-        Example:
-            >>> from easygoogleapi import GoogleService
-            >>> from easygoogleapi.token_store import SQLAlchemyTokenStore
-            >>> 
-            >>> store = SQLAlchemyTokenStore(db_session)
-            >>> google = GoogleService.for_user(
-            ...     user_id="user_123",
-            ...     token_store=store,
-            ...     credentials_path="oauth_client.json",
-            ...     services=["calendar", "gmail"]
-            ... )
-            >>> events = google.calendar.list_events()
         """
         return cls(
             credentials_path=credentials_path,
@@ -283,8 +356,12 @@ class GoogleService:
             auto_auth=auto_auth,
             oauth_port=oauth_port,
             retry_config=retry_config,
+            client_config=client_config,
+            scopes=scopes,
+            on_token_refresh=on_token_refresh,
+            on_token_expired=on_token_expired,
         )
-    
+
     @classmethod
     def for_service_account(
         cls,
@@ -294,42 +371,33 @@ class GoogleService:
         retry_config: RetryConfig | None = None,
     ) -> "GoogleService":
         """Create GoogleService using a service account.
-        
+
         Use this for server-to-server communication or when using domain
         delegation to access user data without user consent.
-        
+
         Args:
             credentials_path: Path to service account JSON file.
             services: List of services to enable.
             impersonate_user: Email of user to impersonate (requires domain delegation).
             retry_config: Configuration for retry behavior.
-            
+
         Returns:
             GoogleService instance using service account.
-            
-        Example:
-            >>> google = GoogleService.for_service_account(
-            ...     credentials_path="service_account.json",
-            ...     services=["drive", "sheets"],
-            ...     impersonate_user="user@domain.com"
-            ... )
-            >>> files = google.drive.list_files()
         """
         instance = cls(
             credentials_path=credentials_path,
             services=services,
-            auto_auth=False,  # We'll handle auth manually
+            auto_auth=False,
             retry_config=retry_config,
         )
-        
-        # Override with service account credentials
+
         instance._impersonate_user = impersonate_user
         instance._credentials = get_service_account_credentials(
             instance._credentials_path,
             instance._scopes,
             subject=impersonate_user,
         )
-        
+
         return instance
 
     # =========================================================================
@@ -350,10 +418,11 @@ class GoogleService:
         Raises:
             AuthenticationError: If authentication fails.
         """
+        cred_source = self._credentials_path or self._client_config
+
         if self._credential_type == CredentialType.OAUTH:
-            # Use token store for OAuth credentials
             self._credentials = get_oauth_credentials_from_store(
-                self._credentials_path,
+                cred_source,
                 self._token_store,
                 self._user_id,
                 self._scopes,
@@ -361,8 +430,7 @@ class GoogleService:
                 port=port or self._oauth_port,
             )
         else:
-            # Service accounts don't use token stores
-            subject = getattr(self, '_impersonate_user', None)
+            subject = getattr(self, "_impersonate_user", None)
             self._credentials = get_service_account_credentials(
                 self._credentials_path,
                 self._scopes,
@@ -377,22 +445,22 @@ class GoogleService:
             return False
 
         if self._credential_type == CredentialType.SERVICE_ACCOUNT:
-            return True  # Service accounts are always valid once loaded
+            return True
 
-        # For OAuth, check if token is valid and not expired
         return self._credentials.valid and not self._credentials.expired
 
-    def get_auth_url(self, redirect_uri: str | None = None) -> str:
+    def get_auth_url(self, redirect_uri: str | None = None) -> tuple[str, str]:
         """Get OAuth authorization URL without opening browser.
 
         Use this for custom OAuth flows where you handle the redirect yourself.
-        After the user authorizes, call exchange_code() with the authorization code.
+        After the user authorizes, call ``exchange_code()`` with the authorization code.
 
         Args:
             redirect_uri: Custom redirect URI. Defaults to OOB flow.
 
         Returns:
-            The authorization URL to redirect the user to.
+            Tuple of ``(authorization_url, state)``. The state value should be
+            verified in the OAuth callback for CSRF protection.
 
         Raises:
             AuthenticationError: If using service account credentials.
@@ -403,15 +471,18 @@ class GoogleService:
             )
 
         uri = redirect_uri or "urn:ietf:wg:oauth:2.0:oob"
-        auth_url, self._oauth_flow = get_auth_url(
-            self._credentials_path, self._scopes, uri
+        cred_source = self._credentials_path or self._client_config
+        auth_url, self._oauth_flow, state = get_auth_url(
+            cred_source, self._scopes, uri
         )
-        return auth_url
+        self._oauth_state = state
+        return auth_url, state
 
     def exchange_code(self, code: str) -> bool:
         """Exchange authorization code for credentials.
 
-        Use this after get_auth_url() when the user provides the authorization code.
+        Use this after ``get_auth_url()`` when the user provides the authorization code.
+        The resulting credentials are automatically persisted to the token store.
 
         Args:
             code: The authorization code from the OAuth callback.
@@ -427,10 +498,11 @@ class GoogleService:
                 "No active OAuth flow. Call get_auth_url() first."
             )
 
-        self._credentials = exchange_code(
-            self._oauth_flow, code, self._token_path
-        )
+        self._credentials = exchange_code(self._oauth_flow, code)
+        # Persist to token store
+        save_token_to_store(self._token_store, self._user_id, self._credentials)
         self._oauth_flow = None
+        self._oauth_state = None
         return True
 
     def refresh_token(self) -> bool:
@@ -441,6 +513,7 @@ class GoogleService:
 
         Raises:
             AuthenticationError: If refresh fails or using service account.
+            TokenRevokedError: If the refresh token has been revoked.
         """
         if self._credential_type == CredentialType.SERVICE_ACCOUNT:
             raise AuthenticationError(
@@ -450,8 +523,19 @@ class GoogleService:
         if self._credentials is None:
             raise AuthenticationError("Not authenticated")
 
-        self._credentials = refresh_credentials(self._credentials)
+        try:
+            self._credentials = refresh_credentials(self._credentials)
+        except AuthenticationError as exc:
+            if "invalid_grant" in str(exc):
+                revoked = TokenRevokedError()
+                if self._on_token_expired:
+                    self._on_token_expired(revoked)
+                raise revoked from exc
+            raise
+
         save_token_to_store(self._token_store, self._user_id, self._credentials)
+        if self._on_token_refresh:
+            self._on_token_refresh(self._credentials)
         return True
 
     def revoke(self) -> bool:
@@ -474,10 +558,7 @@ class GoogleService:
         success = revoke_credentials(self._credentials)
         delete_token_from_store(self._token_store, self._user_id)
         self._credentials = None
-
-        # Clear cached services
         self._clear_service_cache()
-
         return success
 
     def logout(self) -> bool:
@@ -502,37 +583,23 @@ class GoogleService:
 
     @property
     def token_expiry(self) -> datetime | None:
-        """Get the token expiry datetime (OAuth only).
-
-        Returns:
-            The datetime when the token expires, or None for service accounts
-            or if not authenticated.
-        """
+        """Get the token expiry datetime (OAuth only)."""
         if self._credentials is None:
             return None
-
         if self._credential_type == CredentialType.SERVICE_ACCOUNT:
-            return None  # Service account tokens are managed automatically
-
+            return None
         return self._credentials.expiry
 
     @property
     def user_email(self) -> str | None:
-        """Get the authenticated user's email (OAuth only).
-
-        Returns:
-            The user's email address, or None if not available.
-        """
+        """Get the authenticated user's email (OAuth only)."""
         if self._credentials is None:
             return None
 
         if self._credential_type == CredentialType.SERVICE_ACCOUNT:
-            # Service accounts have a service account email
             info = get_service_account_info(self._credentials_path)
             return info.get("client_email")
 
-        # For OAuth, we need to get the user info from the token
-        # The email might be in the id_token if available
         if hasattr(self._credentials, "_id_token") and self._credentials._id_token:
             return self._credentials._id_token.get("email")
 
@@ -540,27 +607,17 @@ class GoogleService:
 
     @property
     def project_id(self) -> str | None:
-        """Get the project ID (service account only).
-
-        Returns:
-            The GCP project ID, or None for OAuth credentials.
-        """
+        """Get the project ID (service account only)."""
         if self._credential_type == CredentialType.OAUTH:
             return None
-
         info = get_service_account_info(self._credentials_path)
         return info.get("project_id")
 
     @property
     def service_account_email(self) -> str | None:
-        """Get the service account email (service account only).
-
-        Returns:
-            The service account email, or None for OAuth credentials.
-        """
+        """Get the service account email (service account only)."""
         if self._credential_type == CredentialType.OAUTH:
             return None
-
         info = get_service_account_info(self._credentials_path)
         return info.get("client_email")
 
@@ -568,13 +625,10 @@ class GoogleService:
     def scopes(self) -> list[str]:
         """Get the list of OAuth scopes being used."""
         return self._scopes.copy()
-    
+
     @property
     def user_id(self) -> str | None:
-        """Get the user ID for this service instance.
-        
-        Returns None for legacy single-user mode or service accounts without impersonation.
-        """
+        """Get the user ID for this service instance."""
         return self._user_id
 
     @property
@@ -587,9 +641,35 @@ class GoogleService:
     # =========================================================================
 
     def _ensure_authenticated(self) -> None:
-        """Ensure we are authenticated before building services."""
+        """Ensure we are authenticated before building services.
+
+        For OAuth credentials this also handles transparent token refresh
+        and fires the ``on_token_refresh`` / ``on_token_expired`` callbacks.
+        """
         if self._credentials is None:
             self.authenticate()
+            return
+
+        # For OAuth, attempt transparent refresh when token is expired
+        if (
+            self._credential_type == CredentialType.OAUTH
+            and self._credentials.expired
+            and self._credentials.refresh_token
+        ):
+            try:
+                self._credentials = refresh_credentials(self._credentials)
+                save_token_to_store(
+                    self._token_store, self._user_id, self._credentials
+                )
+                if self._on_token_refresh:
+                    self._on_token_refresh(self._credentials)
+            except AuthenticationError as exc:
+                if "invalid_grant" in str(exc):
+                    revoked = TokenRevokedError()
+                    if self._on_token_expired:
+                        self._on_token_expired(revoked)
+                    raise revoked from exc
+                raise
 
     def _ensure_service_enabled(self, service_name: ServiceName) -> None:
         """Raise an error if the service was not enabled at initialization."""
@@ -606,7 +686,6 @@ class GoogleService:
             credentials=self._credentials,
             **config.build_kwargs,
         )
-        # Return resource wrapped in service class (which takes retry_config)
         return resource
 
     def _clear_service_cache(self) -> None:
@@ -668,12 +747,10 @@ class GoogleService:
 
     @cached_property
     def meet(self) -> MeetService:
-        """Access the Google Meet API."""
+        """Access the Google Meet API (gRPC-based)."""
         self._ensure_service_enabled("meet")
-        return MeetService(
-            self._build_service("meet"),
-            retry_config=self._retry_config,
-        )
+        self._ensure_authenticated()
+        return MeetService(credentials=self._credentials)
 
     @cached_property
     def sheets(self) -> SheetsService:

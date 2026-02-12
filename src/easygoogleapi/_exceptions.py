@@ -61,6 +61,23 @@ class TokenExpiredError(AuthenticationError):
         super().__init__(message, **kwargs)
 
 
+class TokenRevokedError(AuthenticationError):
+    """Raised when a refresh token has been revoked or invalidated.
+
+    This typically happens when the user revokes access through their
+    Google Account settings, the token is invalidated by a password change,
+    or the refresh token has exceeded its maximum lifetime.
+    Re-authentication via the full OAuth flow is required.
+    """
+
+    def __init__(
+        self,
+        message: str = "Token has been revoked — re-authentication required",
+        **kwargs,
+    ):
+        super().__init__(message, **kwargs)
+
+
 class ServiceNotEnabledError(EasyGoogleAPIError):
     """Raised when accessing a service not specified at initialization."""
 

@@ -14,14 +14,25 @@ class FormsService(BaseService):
         return self._execute_request(request)
 
     def list_responses(
-        self, form_id: str, page_size: int = 50
-    ) -> list[dict[str, Any]]:
-        """List form responses."""
-        request = self._resource.forms().responses().list(
-            formId=form_id, pageSize=page_size
-        )
+        self,
+        form_id: str,
+        page_size: int = 50,
+        page_token: str | None = None,
+    ) -> dict[str, Any]:
+        """List form responses with pagination.
+
+        Returns a dict with ``responses`` and ``nextPageToken`` keys.
+        """
+        kwargs: dict[str, Any] = {"formId": form_id, "pageSize": page_size}
+        if page_token:
+            kwargs["pageToken"] = page_token
+
+        request = self._resource.forms().responses().list(**kwargs)
         result = self._execute_request(request)
-        return result.get("responses", [])
+        return {
+            "responses": result.get("responses", []),
+            "nextPageToken": result.get("nextPageToken"),
+        }
 
     def get_response(
         self, form_id: str, response_id: str

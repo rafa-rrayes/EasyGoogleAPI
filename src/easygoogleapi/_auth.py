@@ -10,28 +10,87 @@ import requests
 from google.auth.transport.requests import Request
 from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google_auth_oauthlib.flow import Flow, InstalledAppFlow
 
 from ._exceptions import AuthenticationError, InvalidCredentialsError
 from ._token_store import TokenStore
 from ._types import CredentialType
 
+# Default OAuth URIs used when normalizing flat client_config dicts
+_DEFAULT_AUTH_URI = "https://accounts.google.com/o/oauth2/auth"
+_DEFAULT_TOKEN_URI = "https://oauth2.googleapis.com/token"
 
-def detect_credential_type(credentials_path: Path) -> CredentialType:
-    """Detect whether credentials are OAuth or service account."""
-    try:
-        with open(credentials_path) as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, FileNotFoundError) as e:
-        raise InvalidCredentialsError(f"Cannot read credentials file: {e}")
+
+def normalize_client_config(config: dict) -> dict:
+    """Normalize a client config dict to the canonical Google format.
+
+    Accepts either the standard Google format (``{"web": {...}}`` or
+    ``{"installed": {...}}``) or a flat shorthand
+    (``{"client_id": "...", "client_secret": "..."}``) and normalizes
+    the shorthand to ``{"web": {...}}``.
+
+    Args:
+        config: Client configuration dictionary.
+
+    Returns:
+        Normalized config in Google's standard format.
+
+    Raises:
+        InvalidCredentialsError: If the dict doesn't contain the required keys.
+    """
+    if "web" in config or "installed" in config:
+        return config
+
+    # Service-account dicts are not client configs
+    if config.get("type") == "service_account":
+        return config
+
+    # Flat shorthand: requires at least client_id + client_secret
+    if "client_id" in config and "client_secret" in config:
+        return {
+            "web": {
+                "client_id": config["client_id"],
+                "client_secret": config["client_secret"],
+                "auth_uri": config.get("auth_uri", _DEFAULT_AUTH_URI),
+                "token_uri": config.get("token_uri", _DEFAULT_TOKEN_URI),
+            }
+        }
+
+    raise InvalidCredentialsError(
+        "client_config must contain 'web', 'installed', or "
+        "'client_id'/'client_secret' keys."
+    )
+
+
+def detect_credential_type(credentials: Path | dict) -> CredentialType:
+    """Detect whether credentials are OAuth or service account.
+
+    Args:
+        credentials: Path to a credentials JSON file, or an in-memory dict.
+
+    Returns:
+        The detected credential type.
+
+    Raises:
+        InvalidCredentialsError: If the credential format is unrecognized.
+    """
+    if isinstance(credentials, dict):
+        data = normalize_client_config(credentials) if credentials else credentials
+    else:
+        try:
+            with open(credentials) as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError) as e:
+            raise InvalidCredentialsError(f"Cannot read credentials file: {e}")
 
     if data.get("type") == "service_account":
         return CredentialType.SERVICE_ACCOUNT
     elif "installed" in data or "web" in data:
         return CredentialType.OAUTH
     else:
+        source = str(credentials) if isinstance(credentials, Path) else "<dict>"
         raise InvalidCredentialsError(
-            f"Unknown credential format in {credentials_path}. "
+            f"Unknown credential format in {source}. "
             "Expected OAuth client credentials or service account JSON."
         )
 
@@ -40,14 +99,7 @@ def detect_credential_type(credentials_path: Path) -> CredentialType:
 
 
 def credentials_to_dict(credentials: Credentials) -> dict[str, Any]:
-    """Convert Credentials object to a dictionary for storage.
-    
-    Args:
-        credentials: OAuth credentials object.
-        
-    Returns:
-        Dictionary containing all credential fields.
-    """
+    """Convert Credentials object to a dictionary for storage."""
     return {
         "token": credentials.token,
         "refresh_token": credentials.refresh_token,
@@ -60,14 +112,7 @@ def credentials_to_dict(credentials: Credentials) -> dict[str, Any]:
 
 
 def dict_to_credentials(token_data: dict[str, Any]) -> Credentials:
-    """Convert dictionary to Credentials object.
-    
-    Args:
-        token_data: Dictionary containing credential fields.
-        
-    Returns:
-        Credentials object.
-    """
+    """Convert dictionary to Credentials object."""
     creds = Credentials(
         token=token_data.get("token"),
         refresh_token=token_data.get("refresh_token"),
@@ -76,15 +121,14 @@ def dict_to_credentials(token_data: dict[str, Any]) -> Credentials:
         client_secret=token_data.get("client_secret"),
         scopes=token_data.get("scopes"),
     )
-    
-    # Parse expiry
+
     expiry_str = token_data.get("expiry")
     if expiry_str:
         try:
             creds.expiry = datetime.fromisoformat(expiry_str)
         except (ValueError, TypeError):
             pass
-    
+
     return creds
 
 
@@ -92,15 +136,7 @@ def dict_to_credentials(token_data: dict[str, Any]) -> Credentials:
 
 
 def load_token_from_store(token_store: TokenStore, user_id: str) -> Credentials | None:
-    """Load OAuth token from token store.
-    
-    Args:
-        token_store: The token store to load from.
-        user_id: User identifier.
-        
-    Returns:
-        Credentials object, or None if not found.
-    """
+    """Load OAuth token from token store."""
     token_data = token_store.get(user_id)
     if token_data:
         return dict_to_credentials(token_data)
@@ -112,27 +148,13 @@ def save_token_to_store(
     user_id: str,
     credentials: Credentials,
 ) -> None:
-    """Save OAuth token to token store.
-    
-    Args:
-        token_store: The token store to save to.
-        user_id: User identifier.
-        credentials: Credentials to save.
-    """
+    """Save OAuth token to token store."""
     token_data = credentials_to_dict(credentials)
     token_store.save(user_id, token_data)
 
 
 def delete_token_from_store(token_store: TokenStore, user_id: str) -> bool:
-    """Delete OAuth token from token store.
-    
-    Args:
-        token_store: The token store to delete from.
-        user_id: User identifier.
-        
-    Returns:
-        True if deleted, False if not found.
-    """
+    """Delete OAuth token from token store."""
     return token_store.delete(user_id)
 
 
@@ -141,7 +163,7 @@ def delete_token_from_store(token_store: TokenStore, user_id: str) -> bool:
 
 def load_token(token_path: Path) -> Credentials | None:
     """Load existing OAuth token from file.
-    
+
     Note: This is deprecated. Use TokenStore with load_token_from_store instead.
     """
     if token_path.exists():
@@ -152,7 +174,7 @@ def load_token(token_path: Path) -> Credentials | None:
 
 def save_token(token_path: Path, credentials: Credentials) -> None:
     """Save OAuth token to file.
-    
+
     Note: This is deprecated. Use TokenStore with save_token_to_store instead.
     """
     token_path.parent.mkdir(parents=True, exist_ok=True)
@@ -162,7 +184,7 @@ def save_token(token_path: Path, credentials: Credentials) -> None:
 
 def delete_token(token_path: Path) -> bool:
     """Delete OAuth token file. Returns True if deleted, False if not found.
-    
+
     Note: This is deprecated. Use TokenStore with delete_token_from_store instead.
     """
     if token_path.exists():
@@ -174,61 +196,90 @@ def delete_token(token_path: Path) -> bool:
 # OAuth flow functions
 
 
+def _is_web_config(config: Path | dict) -> bool:
+    """Return True if the config describes a web OAuth client."""
+    if isinstance(config, dict):
+        normalized = normalize_client_config(config) if config else config
+        return "web" in normalized
+    # File-based: read and check
+    try:
+        with open(config) as f:
+            data = json.load(f)
+        return "web" in data
+    except Exception:
+        return False
+
+
 def create_oauth_flow(
-    credentials_path: Path,
+    credentials: Path | dict,
     scopes: list[str],
     redirect_uri: str | None = None,
-) -> InstalledAppFlow:
-    """Create an OAuth flow without running it."""
-    flow = InstalledAppFlow.from_client_secrets_file(
-        str(credentials_path), scopes
-    )
+) -> Flow | InstalledAppFlow:
+    """Create an OAuth flow without running it.
+
+    Args:
+        credentials: Path to client secrets file or in-memory client config dict.
+        scopes: OAuth scopes to request.
+        redirect_uri: Optional redirect URI.
+
+    Returns:
+        A ``Flow`` (for web configs) or ``InstalledAppFlow`` (for installed configs).
+    """
+    if isinstance(credentials, dict):
+        config = normalize_client_config(credentials)
+        if "web" in config:
+            flow = Flow.from_client_config(config, scopes)
+        else:
+            flow = InstalledAppFlow.from_client_config(config, scopes)
+    else:
+        if _is_web_config(credentials):
+            flow = Flow.from_client_secrets_file(str(credentials), scopes)
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(
+                str(credentials), scopes
+            )
     if redirect_uri:
         flow.redirect_uri = redirect_uri
     return flow
 
 
 def get_auth_url(
-    credentials_path: Path,
+    credentials: Path | dict,
     scopes: list[str],
     redirect_uri: str = "urn:ietf:wg:oauth:2.0:oob",
-) -> tuple[str, InstalledAppFlow]:
+) -> tuple[str, Flow | InstalledAppFlow, str]:
     """Get OAuth authorization URL without opening browser.
 
     Returns:
-        Tuple of (authorization_url, flow). The flow is needed for exchange_code().
+        Tuple of (authorization_url, flow, state). The flow is needed for
+        ``exchange_code()`` and the state for CSRF verification.
     """
-    flow = create_oauth_flow(credentials_path, scopes, redirect_uri)
-    auth_url, _ = flow.authorization_url(
+    flow = create_oauth_flow(credentials, scopes, redirect_uri)
+    auth_url, state = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
         prompt="consent",
     )
-    return auth_url, flow
+    return auth_url, flow, state
 
 
 def exchange_code(
-    flow: InstalledAppFlow,
+    flow: Flow | InstalledAppFlow,
     code: str,
-    token_path: Path | None = None,
 ) -> Credentials:
     """Exchange authorization code for credentials.
+
+    Persistence is the caller's responsibility.
 
     Args:
         flow: The OAuth flow from get_auth_url().
         code: The authorization code from the OAuth callback.
-        token_path: Optional path to save the token.
 
     Returns:
         The OAuth credentials.
     """
     flow.fetch_token(code=code)
-    credentials = flow.credentials
-
-    if token_path:
-        save_token(token_path, credentials)
-
-    return credentials
+    return flow.credentials
 
 
 def refresh_credentials(credentials: Credentials) -> Credentials:
@@ -270,19 +321,11 @@ def get_oauth_credentials(
     port: int = 8080,
 ) -> Credentials:
     """Get OAuth credentials, refreshing or creating as needed.
-    
-    Note: This is deprecated. Use get_oauth_credentials_from_store for multi-user support.
 
-    Args:
-        credentials_path: Path to OAuth client secrets file.
-        token_path: Path to store/load the token.
-        scopes: List of OAuth scopes.
-        open_browser: If True, opens browser for OAuth flow.
-        port: Port for the local OAuth callback server (default: 8080).
+    Note: This is deprecated. Use get_oauth_credentials_from_store for multi-user support.
     """
     creds = load_token(token_path)
 
-    # Refresh or create new credentials
     if creds and creds.expired and creds.refresh_token:
         creds = refresh_credentials(creds)
         save_token(token_path, creds)
@@ -302,7 +345,7 @@ def get_oauth_credentials(
 
 
 def get_oauth_credentials_from_store(
-    credentials_path: Path,
+    credentials: Path | dict,
     token_store: TokenStore,
     user_id: str,
     scopes: list[str],
@@ -312,34 +355,39 @@ def get_oauth_credentials_from_store(
     """Get OAuth credentials using a token store, refreshing or creating as needed.
 
     Args:
-        credentials_path: Path to OAuth client secrets file.
+        credentials: Path to OAuth client secrets file, or in-memory config dict.
         token_store: Token store for loading/saving tokens.
         user_id: User identifier.
         scopes: List of OAuth scopes.
         open_browser: If True, opens browser for OAuth flow.
         port: Port for the local OAuth callback server (default: 8080).
-        
+
     Returns:
         Valid OAuth credentials.
-        
+
     Raises:
         AuthenticationError: If authentication fails.
     """
     creds = load_token_from_store(token_store, user_id)
 
-    # Refresh or create new credentials
     if creds and creds.expired and creds.refresh_token:
         creds = refresh_credentials(creds)
         save_token_to_store(token_store, user_id, creds)
     elif not creds or not creds.valid:
-        if not open_browser:
+        # For web configs we never auto-open a browser
+        is_web = _is_web_config(credentials)
+        if is_web or not open_browser:
             raise AuthenticationError(
-                "No valid credentials and open_browser=False. "
-                "Use get_auth_url() and exchange_code() for manual flow."
+                "No valid credentials. "
+                "Use get_auth_url() and exchange_code() for the OAuth flow."
             )
-        flow = InstalledAppFlow.from_client_secrets_file(
-            str(credentials_path), scopes
-        )
+        if isinstance(credentials, dict):
+            config = normalize_client_config(credentials)
+            flow = InstalledAppFlow.from_client_config(config, scopes)
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(
+                str(credentials), scopes
+            )
         creds = flow.run_local_server(port=port)
         save_token_to_store(token_store, user_id, creds)
 
@@ -351,28 +399,13 @@ def get_service_account_credentials(
     scopes: list[str],
     subject: str | None = None,
 ) -> service_account.Credentials:
-    """Get service account credentials.
-    
-    Args:
-        credentials_path: Path to service account JSON file.
-        scopes: List of OAuth scopes.
-        subject: Optional email address to impersonate (domain delegation).
-        
-    Returns:
-        Service account credentials.
-        
-    Raises:
-        AuthenticationError: If loading credentials fails.
-    """
+    """Get service account credentials."""
     try:
         creds = service_account.Credentials.from_service_account_file(
             str(credentials_path), scopes=scopes
         )
-        
-        # Apply domain delegation if subject is provided
         if subject:
             creds = creds.with_subject(subject)
-        
         return creds
     except Exception as e:
         raise AuthenticationError(
