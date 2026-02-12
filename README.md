@@ -19,7 +19,10 @@ google.gmail.send(to="team@company.com", subject="Report", body="See attached.")
 ## Features
 
 - **Simple authentication** — OAuth 2.0 and service accounts, auto-detected from your credentials file
-- **Unified interface** — All Google services accessed through a single `GoogleService` object
+- **Multi-user support** — Per-user OAuth tokens with pluggable storage backends
+- **Unified interface** — All Google services through a single `GoogleService` object
+- **Automatic retries** — Exponential backoff for rate limits and transient failures
+- **Rich error handling** — Specific exception types for every failure mode
 - **Lazy loading** — Services are only initialized when you use them
 - **Type hints** — Full typing support for better IDE experience
 - **Raw access** — Drop down to the underlying Google API client when needed via `.raw`
@@ -55,7 +58,7 @@ uv add easygoogleapi
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 2. Create a project (or select existing)
 3. Enable the APIs you need (Calendar, Drive, Gmail, etc.)
-4. Go to **APIs & Services → Credentials**
+4. Go to **APIs & Services > Credentials**
 5. Create **OAuth 2.0 Client ID** (for user data) or **Service Account** (for server-to-server)
 6. Download the JSON credentials file
 
@@ -185,7 +188,7 @@ print(f"Code: {space['meetingCode']}")
 
 ### OAuth 2.0 (User Data)
 
-Best for applications that access user data with their consent.
+Best for scripts and applications that access user data with their consent.
 
 ```python
 google = GoogleService(
@@ -212,9 +215,24 @@ print(google.project_id)
 print(google.service_account_email)
 ```
 
-### Manual OAuth Flow
+### Service Account with Domain Delegation
 
-For web applications or custom flows:
+Access user data without user consent via domain-wide delegation:
+
+```python
+google = GoogleService.for_service_account(
+    credentials_path="service_account.json",
+    services=["drive", "sheets"],
+    impersonate_user="user@yourdomain.com",
+)
+
+# Now accessing user@yourdomain.com's files
+files = google.drive.list_files()
+```
+
+### Manual OAuth Flow (Web Apps)
+
+For web applications where you handle the redirect yourself:
 
 ```python
 google = GoogleService(
@@ -251,6 +269,190 @@ google.revoke()
 google.logout()
 ```
 
+## Multi-User Support
+
+For web applications and background workers that handle multiple users, use `GoogleService.for_user()` with a pluggable token store:
+
+```python
+from easygoogleapi import GoogleService
+
+@app.route("/calendar/events")
+def get_events():
+    google = GoogleService.for_user(
+        user_id=current_user.id,
+        token_store=DatabaseTokenStore(db.session),
+        credentials_path="oauth_client.json",
+        services=["calendar"],
+    )
+
+    events = google.calendar.list_events()
+    return jsonify(events)
+```
+
+Each user gets their own isolated `GoogleService` instance with their own OAuth token. Instances are stateless and safe for concurrent use.
+
+### Token Store
+
+The `TokenStore` interface lets you store tokens anywhere — database, Redis, filesystem, etc.
+
+Built-in implementations:
+
+| Store | Use Case |
+|-------|----------|
+| `FileTokenStore` | Local scripts (default) |
+| `JSONFileTokenStore` | Human-readable file storage |
+| `InMemoryTokenStore` | Testing and development |
+
+#### Custom Token Store
+
+Implement the `TokenStore` interface for your storage backend:
+
+```python
+from easygoogleapi import TokenStore
+
+class DatabaseTokenStore(TokenStore):
+    def __init__(self, session):
+        self.session = session
+
+    def get(self, user_id: str) -> dict | None:
+        token = self.session.query(OAuthToken).filter_by(user_id=user_id).first()
+        return token.to_dict() if token else None
+
+    def save(self, user_id: str, token_data: dict) -> None:
+        token = OAuthToken(user_id=user_id, **token_data)
+        self.session.merge(token)
+        self.session.commit()
+
+    def delete(self, user_id: str) -> bool:
+        token = self.session.query(OAuthToken).filter_by(user_id=user_id).first()
+        if token:
+            self.session.delete(token)
+            self.session.commit()
+            return True
+        return False
+```
+
+### Background Workers
+
+Safe for Celery, RQ, or any background job system — create a fresh instance per task:
+
+```python
+@celery.task
+def sync_user_calendar(user_id: str):
+    google = GoogleService.for_user(
+        user_id=user_id,
+        token_store=DatabaseTokenStore(db.session),
+        credentials_path="oauth_client.json",
+        services=["calendar"],
+    )
+
+    events = google.calendar.list_events()
+    # ... sync logic ...
+    # Instance is garbage collected after task completes
+```
+
+## Retry and Backoff
+
+All API calls automatically retry on transient failures with exponential backoff:
+
+- **Rate limits (HTTP 429)** — retried with `Retry-After` header respected
+- **Server errors (HTTP 5xx)** — retried with exponential backoff
+- **Network failures** — retried automatically
+
+Configure retry behavior per instance:
+
+```python
+from easygoogleapi import GoogleService, RetryConfig
+
+google = GoogleService(
+    credentials_path="credentials.json",
+    services=["calendar"],
+    retry_config=RetryConfig(
+        max_retries=5,        # Default: 3
+        base_delay=2.0,       # Default: 1.0
+        max_delay=60.0,       # Default: 60.0
+        exponential_base=2.0, # Default: 2.0
+        jitter=True,          # Default: True
+    ),
+)
+```
+
+## Error Handling
+
+Specific exception types let you handle each failure mode differently:
+
+```python
+from easygoogleapi import (
+    EasyGoogleAPIError,
+    AuthenticationError,
+    ServiceNotEnabledError,
+    RateLimitError,
+    QuotaExceededError,
+    PermissionDeniedError,
+    NotFoundError,
+    ServerError,
+    MaxRetriesExceededError,
+    APIError,
+)
+
+try:
+    google.calendar.list_events()
+
+except RateLimitError as e:
+    # Auto-retried; only raised if retries exhausted
+    print(f"Rate limited, retry after {e.retry_after}s")
+
+except QuotaExceededError:
+    # Permanent — wait for quota reset
+    print("Quota exceeded")
+
+except PermissionDeniedError:
+    # Permanent — need more scopes or permissions
+    print("Permission denied")
+
+except NotFoundError:
+    # Resource doesn't exist
+    print("Not found")
+
+except AuthenticationError:
+    # Auth failed — token expired, revoked, etc.
+    print("Authentication failed")
+
+except ServiceNotEnabledError as e:
+    # Service wasn't listed in services=[]
+    print(f"Service not enabled: {e.service_name}")
+
+except MaxRetriesExceededError:
+    # All retry attempts failed
+    print("All retries exhausted")
+
+except APIError as e:
+    # Catch-all for other API errors
+    print(f"API error: {e}")
+    print(f"Original error: {e.original_error}")
+```
+
+### Exception Hierarchy
+
+```
+EasyGoogleAPIError
+├── AuthenticationError
+│   ├── InvalidCredentialsError
+│   └── TokenExpiredError
+├── ServiceNotEnabledError
+├── APIError
+│   ├── TransientError (retryable)
+│   │   ├── RateLimitError
+│   │   ├── ServerError
+│   │   └── BackendError
+│   ├── PermissionDeniedError
+│   ├── NotFoundError
+│   ├── QuotaExceededError
+│   ├── InvalidRequestError
+│   └── ConflictError
+└── MaxRetriesExceededError
+```
+
 ## Advanced Usage
 
 ### Raw API Access
@@ -275,27 +477,6 @@ print(google.scopes)
 # ['https://www.googleapis.com/auth/calendar', 'https://www.googleapis.com/auth/gmail.modify']
 ```
 
-### Error Handling
-
-```python
-from easygoogleapi import (
-    EasyGoogleAPIError,
-    AuthenticationError,
-    ServiceNotEnabledError,
-    APIError,
-)
-
-try:
-    google.calendar.list_events()
-except AuthenticationError as e:
-    print(f"Auth failed: {e}")
-except ServiceNotEnabledError as e:
-    print(f"Service not enabled: {e.service_name}")
-except APIError as e:
-    print(f"API error: {e}")
-    print(f"Original error: {e.original_error}")
-```
-
 ## Configuration Reference
 
 ### GoogleService Parameters
@@ -304,9 +485,20 @@ except APIError as e:
 |-----------|------|---------|-------------|
 | `credentials_path` | `str \| Path` | required | Path to credentials JSON |
 | `services` | `list[str]` | required | Services to enable |
-| `token_path` | `str \| Path` | auto | Where to store OAuth token |
+| `token_path` | `str \| Path` | auto | Where to store OAuth token (file mode) |
+| `token_store` | `TokenStore` | `None` | Pluggable token storage backend |
+| `user_id` | `str` | `None` | User identifier (required with `token_store`) |
 | `auto_auth` | `bool` | `True` | Authenticate on init |
 | `oauth_port` | `int` | `8080` | Port for OAuth callback |
+| `retry_config` | `RetryConfig` | defaults | Retry behavior configuration |
+
+### Factory Methods
+
+| Method | Use Case |
+|--------|----------|
+| `GoogleService(...)` | Simple scripts, single user |
+| `GoogleService.for_user(...)` | Multi-user web apps, background workers |
+| `GoogleService.for_service_account(...)` | Server-to-server, domain delegation |
 
 ### Available Services
 

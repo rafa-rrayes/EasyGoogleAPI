@@ -259,4 +259,4 @@ if __name__ == "__main__":
     print("  3. Handle token refresh in background")
     print("  4. Monitor rate limits and quotas")
     print("  5. Implement proper error handling and logging")
-    print("\nSee ARCHITECTURE_ANALYSIS.md for detailed production patterns.")
+    print("\nSee README.md for detailed production patterns.")

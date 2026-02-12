@@ -12,15 +12,13 @@ Example usage:
     events = google.calendar.list_events()
     google.drive.upload_file("document.pdf")
     google.gmail.send(to="user@example.com", subject="Hello", body="World")
-    
+
 Multi-user usage:
     from easygoogleapi import GoogleService
-    from easygoogleapi.token_store import SQLAlchemyTokenStore
-    
-    # Create GoogleService for a specific user
+
     google = GoogleService.for_user(
         user_id="user_123",
-        token_store=SQLAlchemyTokenStore(db_session),
+        token_store=my_token_store,
         credentials_path="oauth_credentials.json",
         services=["calendar", "gmail"]
     )
@@ -131,23 +129,22 @@ class GoogleService:
 
     Handles authentication and provides access to Google API services
     through lazy-loaded properties.
-    
-    For backwards compatibility, the simple constructor is still supported:
+
+    Simple usage:
         google = GoogleService(
             credentials_path="credentials.json",
             services=["calendar", "drive"]
         )
-    
-    For multi-user production applications, use factory methods:
-        # OAuth with per-user tokens
+
+    Multi-user applications:
         google = GoogleService.for_user(
             user_id="user_123",
             token_store=DatabaseTokenStore(session),
             credentials_path="oauth_client.json",
             services=["calendar"]
         )
-        
-        # Service account with domain delegation
+
+    Service account with domain delegation:
         google = GoogleService.for_service_account(
             credentials_path="service_account.json",
             services=["drive"],
@@ -157,12 +154,11 @@ class GoogleService:
     Args:
         credentials_path: Path to the credentials JSON file (OAuth or service account).
         services: List of services to enable (e.g., ['calendar', 'drive', 'gmail']).
-        token_path: (Deprecated) Custom path for storing OAuth tokens.
-                   Use token_store for production. Defaults to same directory as 
-                   credentials with '_token.pickle' suffix.
-        token_store: (New) Pluggable token storage. If not provided, falls back 
-                    to file-based storage for backwards compatibility.
-        user_id: (New) User identifier for multi-user scenarios. Auto-generated 
+        token_path: Custom path for storing OAuth tokens. Defaults to same directory
+                   as credentials with '_token.pickle' suffix.
+        token_store: Pluggable token storage backend. If not provided, uses
+                    file-based storage.
+        user_id: User identifier for multi-user scenarios. Auto-generated
                 from token_path if not provided.
         auto_auth: If True (default), authenticate immediately. If False, delay until
                    authenticate() is called or a service is accessed.
