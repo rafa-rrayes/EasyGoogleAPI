@@ -2,7 +2,9 @@
 
 import json
 import pickle
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import requests
 from google.auth.transport.requests import Request
@@ -11,6 +13,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
 from ._exceptions import AuthenticationError, InvalidCredentialsError
+from ._token_store import TokenStore
 from ._types import CredentialType
 
 
@@ -33,8 +36,114 @@ def detect_credential_type(credentials_path: Path) -> CredentialType:
         )
 
 
+# Credential <-> Dict conversion for token store
+
+
+def credentials_to_dict(credentials: Credentials) -> dict[str, Any]:
+    """Convert Credentials object to a dictionary for storage.
+    
+    Args:
+        credentials: OAuth credentials object.
+        
+    Returns:
+        Dictionary containing all credential fields.
+    """
+    return {
+        "token": credentials.token,
+        "refresh_token": credentials.refresh_token,
+        "token_uri": credentials.token_uri,
+        "client_id": credentials.client_id,
+        "client_secret": credentials.client_secret,
+        "scopes": credentials.scopes,
+        "expiry": credentials.expiry.isoformat() if credentials.expiry else None,
+    }
+
+
+def dict_to_credentials(token_data: dict[str, Any]) -> Credentials:
+    """Convert dictionary to Credentials object.
+    
+    Args:
+        token_data: Dictionary containing credential fields.
+        
+    Returns:
+        Credentials object.
+    """
+    creds = Credentials(
+        token=token_data.get("token"),
+        refresh_token=token_data.get("refresh_token"),
+        token_uri=token_data.get("token_uri"),
+        client_id=token_data.get("client_id"),
+        client_secret=token_data.get("client_secret"),
+        scopes=token_data.get("scopes"),
+    )
+    
+    # Parse expiry
+    expiry_str = token_data.get("expiry")
+    if expiry_str:
+        try:
+            creds.expiry = datetime.fromisoformat(expiry_str)
+        except (ValueError, TypeError):
+            pass
+    
+    return creds
+
+
+# Token store integration
+
+
+def load_token_from_store(token_store: TokenStore, user_id: str) -> Credentials | None:
+    """Load OAuth token from token store.
+    
+    Args:
+        token_store: The token store to load from.
+        user_id: User identifier.
+        
+    Returns:
+        Credentials object, or None if not found.
+    """
+    token_data = token_store.get(user_id)
+    if token_data:
+        return dict_to_credentials(token_data)
+    return None
+
+
+def save_token_to_store(
+    token_store: TokenStore,
+    user_id: str,
+    credentials: Credentials,
+) -> None:
+    """Save OAuth token to token store.
+    
+    Args:
+        token_store: The token store to save to.
+        user_id: User identifier.
+        credentials: Credentials to save.
+    """
+    token_data = credentials_to_dict(credentials)
+    token_store.save(user_id, token_data)
+
+
+def delete_token_from_store(token_store: TokenStore, user_id: str) -> bool:
+    """Delete OAuth token from token store.
+    
+    Args:
+        token_store: The token store to delete from.
+        user_id: User identifier.
+        
+    Returns:
+        True if deleted, False if not found.
+    """
+    return token_store.delete(user_id)
+
+
+# Legacy file-based functions (kept for backwards compatibility)
+
+
 def load_token(token_path: Path) -> Credentials | None:
-    """Load existing OAuth token from file."""
+    """Load existing OAuth token from file.
+    
+    Note: This is deprecated. Use TokenStore with load_token_from_store instead.
+    """
     if token_path.exists():
         with open(token_path, "rb") as token_file:
             return pickle.load(token_file)
@@ -42,18 +151,27 @@ def load_token(token_path: Path) -> Credentials | None:
 
 
 def save_token(token_path: Path, credentials: Credentials) -> None:
-    """Save OAuth token to file."""
+    """Save OAuth token to file.
+    
+    Note: This is deprecated. Use TokenStore with save_token_to_store instead.
+    """
     token_path.parent.mkdir(parents=True, exist_ok=True)
     with open(token_path, "wb") as token_file:
         pickle.dump(credentials, token_file)
 
 
 def delete_token(token_path: Path) -> bool:
-    """Delete OAuth token file. Returns True if deleted, False if not found."""
+    """Delete OAuth token file. Returns True if deleted, False if not found.
+    
+    Note: This is deprecated. Use TokenStore with delete_token_from_store instead.
+    """
     if token_path.exists():
         token_path.unlink()
         return True
     return False
+
+
+# OAuth flow functions
 
 
 def create_oauth_flow(
@@ -152,6 +270,8 @@ def get_oauth_credentials(
     port: int = 8080,
 ) -> Credentials:
     """Get OAuth credentials, refreshing or creating as needed.
+    
+    Note: This is deprecated. Use get_oauth_credentials_from_store for multi-user support.
 
     Args:
         credentials_path: Path to OAuth client secrets file.
@@ -181,15 +301,79 @@ def get_oauth_credentials(
     return creds
 
 
+def get_oauth_credentials_from_store(
+    credentials_path: Path,
+    token_store: TokenStore,
+    user_id: str,
+    scopes: list[str],
+    open_browser: bool = True,
+    port: int = 8080,
+) -> Credentials:
+    """Get OAuth credentials using a token store, refreshing or creating as needed.
+
+    Args:
+        credentials_path: Path to OAuth client secrets file.
+        token_store: Token store for loading/saving tokens.
+        user_id: User identifier.
+        scopes: List of OAuth scopes.
+        open_browser: If True, opens browser for OAuth flow.
+        port: Port for the local OAuth callback server (default: 8080).
+        
+    Returns:
+        Valid OAuth credentials.
+        
+    Raises:
+        AuthenticationError: If authentication fails.
+    """
+    creds = load_token_from_store(token_store, user_id)
+
+    # Refresh or create new credentials
+    if creds and creds.expired and creds.refresh_token:
+        creds = refresh_credentials(creds)
+        save_token_to_store(token_store, user_id, creds)
+    elif not creds or not creds.valid:
+        if not open_browser:
+            raise AuthenticationError(
+                "No valid credentials and open_browser=False. "
+                "Use get_auth_url() and exchange_code() for manual flow."
+            )
+        flow = InstalledAppFlow.from_client_secrets_file(
+            str(credentials_path), scopes
+        )
+        creds = flow.run_local_server(port=port)
+        save_token_to_store(token_store, user_id, creds)
+
+    return creds
+
+
 def get_service_account_credentials(
     credentials_path: Path,
     scopes: list[str],
+    subject: str | None = None,
 ) -> service_account.Credentials:
-    """Get service account credentials."""
+    """Get service account credentials.
+    
+    Args:
+        credentials_path: Path to service account JSON file.
+        scopes: List of OAuth scopes.
+        subject: Optional email address to impersonate (domain delegation).
+        
+    Returns:
+        Service account credentials.
+        
+    Raises:
+        AuthenticationError: If loading credentials fails.
+    """
     try:
-        return service_account.Credentials.from_service_account_file(
+        creds = service_account.Credentials.from_service_account_file(
             str(credentials_path), scopes=scopes
         )
+        
+        # Apply domain delegation if subject is provided
+        if subject:
+            creds = creds.with_subject(subject)
+        
+        return creds
     except Exception as e:
         raise AuthenticationError(
             f"Failed to load service account credentials: {e}"
