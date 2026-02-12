@@ -76,7 +76,7 @@ class CalendarService(BaseService):
             hidden: If ``True`` the calendar is hidden in the UI.
         """
         body: dict[str, Any] = {"id": calendar_id}
-        if color_id:
+        if color_id is not None:
             body["colorId"] = color_id
         if hidden:
             body["hidden"] = True
@@ -152,9 +152,9 @@ class CalendarService(BaseService):
             event_body["start"] = {"dateTime": start.isoformat(), "timeZone": timezone}
         if end is not None:
             event_body["end"] = {"dateTime": end.isoformat(), "timeZone": timezone}
-        if description:
+        if description is not None:
             event_body["description"] = description
-        if location:
+        if location is not None:
             event_body["location"] = location
         if attendees:
             event_body["attendees"] = [{"email": email} for email in attendees]
