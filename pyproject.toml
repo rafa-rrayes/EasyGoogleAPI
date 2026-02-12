@@ -7,7 +7,7 @@ license = "MIT"
 authors = [
     { name = "rafa-rrayes", email = "rafa@rayes.com.br" }
 ]
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 keywords = [
     "google",
     "google-api",
@@ -27,6 +27,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Internet",
     "Topic :: Software Development :: Libraries :: Python Modules",
@@ -88,7 +89,7 @@ select = [
 ]
 
 [tool.mypy]
-python_version = "3.13"
+python_version = "3.12"
 strict = true
 warn_return_any = true
 warn_unused_ignores = true
