@@ -7,18 +7,6 @@
 
 A simplified Python interface for Google APIs. One class, seven services, zero boilerplate. Handles OAuth 2.0 and service account authentication, automatic retries with exponential backoff, multi-user token storage, and a structured exception hierarchy -- so you can focus on what you're building.
 
-## Installation
-
-```bash
-pip install easygoogleapi
-```
-
-For Google Meet support (requires the gRPC client):
-
-```bash
-pip install easygoogleapi[meet]
-```
-
 ## Quick Start
 
 ```python
