@@ -438,3 +438,58 @@ class DriveService(BaseService):
         request = self._resource.about().get(fields="storageQuota")
         result = self._execute_request(request)
         return StorageQuota.from_api_response(result.get("storageQuota", {}))
+
+    # ------------------------------------------------------------------
+    # Search / Shared Drives / Versions / Shortcuts
+    # ------------------------------------------------------------------
+
+    def search(
+        self,
+        query: str,
+        page_size: int = 100,
+        order_by: str | None = None,
+    ) -> PageIterator[FileMetadata]:
+        """Search for files matching a query string.
+
+        Convenience wrapper around ``list_files`` that requires a query.
+        """
+        return self.list_files(query=query, page_size=page_size, order_by=order_by)
+
+    def list_shared_drives(self, page_size: int = 100) -> list[FileMetadata]:
+        """List shared drives accessible to the user."""
+        request = self._resource.drives().list(pageSize=page_size)
+        result = self._execute_request(request)
+        return [
+            FileMetadata.from_api_response(d)
+            for d in result.get("drives", [])
+        ]
+
+    def list_file_versions(self, file_id: str) -> list[FileMetadata]:
+        """List revisions (versions) of a file."""
+        request = self._resource.revisions().list(fileId=file_id)
+        result = self._execute_request(request)
+        return [
+            FileMetadata.from_api_response(r)
+            for r in result.get("revisions", [])
+        ]
+
+    def create_shortcut(
+        self,
+        target_id: str,
+        name: str,
+        folder_id: str | None = None,
+    ) -> FileMetadata:
+        """Create a shortcut to an existing file or folder."""
+        file_metadata: dict[str, Any] = {
+            "name": name,
+            "mimeType": "application/vnd.google-apps.shortcut",
+            "shortcutDetails": {"targetId": target_id},
+        }
+        if folder_id:
+            file_metadata["parents"] = [folder_id]
+
+        request = self._resource.files().create(
+            body=file_metadata, fields="id, name, mimeType, shortcutDetails"
+        )
+        result = self._execute_request(request)
+        return FileMetadata.from_api_response(result)

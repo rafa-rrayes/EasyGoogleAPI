@@ -124,3 +124,71 @@ class SheetsService(BaseService):
         )
         result = self._execute_request(request)
         return BatchUpdateResponse.from_api_response(result)
+
+    # ------------------------------------------------------------------
+    # Multi-range / Sheet management
+    # ------------------------------------------------------------------
+
+    def batch_get(
+        self,
+        spreadsheet_id: str,
+        ranges: list[str],
+        value_render_option: str = "FORMATTED_VALUE",
+    ) -> dict[str, list[list[Any]]]:
+        """Read multiple ranges in a single request.
+
+        Returns a dict mapping each range string to its values.
+        """
+        request = self._resource.spreadsheets().values().batchGet(
+            spreadsheetId=spreadsheet_id,
+            ranges=ranges,
+            valueRenderOption=value_render_option,
+        )
+        result = self._execute_request(request)
+        return {
+            vr.get("range", ""): vr.get("values", [])
+            for vr in result.get("valueRanges", [])
+        }
+
+    def delete_sheet(
+        self, spreadsheet_id: str, sheet_id: int
+    ) -> BatchUpdateResponse:
+        """Delete a sheet (tab) from a spreadsheet."""
+        return self.batch_update(
+            spreadsheet_id,
+            [{"deleteSheet": {"sheetId": sheet_id}}],
+        )
+
+    def rename_sheet(
+        self, spreadsheet_id: str, sheet_id: int, new_title: str
+    ) -> BatchUpdateResponse:
+        """Rename a sheet (tab) in a spreadsheet."""
+        return self.batch_update(
+            spreadsheet_id,
+            [
+                {
+                    "updateSheetProperties": {
+                        "properties": {"sheetId": sheet_id, "title": new_title},
+                        "fields": "title",
+                    }
+                }
+            ],
+        )
+
+    def auto_resize_columns(
+        self, spreadsheet_id: str, sheet_id: int
+    ) -> BatchUpdateResponse:
+        """Auto-resize all columns in a sheet to fit their content."""
+        return self.batch_update(
+            spreadsheet_id,
+            [
+                {
+                    "autoResizeDimensions": {
+                        "dimensions": {
+                            "sheetId": sheet_id,
+                            "dimension": "COLUMNS",
+                        }
+                    }
+                }
+            ],
+        )

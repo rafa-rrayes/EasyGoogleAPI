@@ -11,7 +11,7 @@ from typing import Any
 
 from .._base import BaseService
 from .._pagination import PageIterator
-from .models import Label, Message, MessageList, Thread
+from .models import Draft, Label, Message, MessageList, Thread
 
 
 class GmailService(BaseService):
@@ -168,3 +168,104 @@ class GmailService(BaseService):
         )
         result = self._execute_request(request)
         return Thread.from_api_response(result)
+
+    # ------------------------------------------------------------------
+    # Drafts
+    # ------------------------------------------------------------------
+
+    def create_draft(
+        self,
+        to: str,
+        subject: str,
+        body: str,
+        html: bool = False,
+    ) -> Draft:
+        """Create a new draft email."""
+        message = MIMEText(body, "html" if html else "plain")
+        message["to"] = to
+        message["subject"] = subject
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+        request = self._resource.users().drafts().create(
+            userId="me", body={"message": {"raw": raw}}
+        )
+        result = self._execute_request(request)
+        return Draft.from_api_response(result)
+
+    def list_drafts(self, max_results: int = 100) -> list[Draft]:
+        """List drafts in the mailbox."""
+        request = self._resource.users().drafts().list(
+            userId="me", maxResults=max_results
+        )
+        result = self._execute_request(request)
+        return [
+            Draft.from_api_response(d)
+            for d in result.get("drafts", [])
+        ]
+
+    def send_draft(self, draft_id: str) -> Message:
+        """Send an existing draft."""
+        request = self._resource.users().drafts().send(
+            userId="me", body={"id": draft_id}
+        )
+        result = self._execute_request(request)
+        return Message.from_api_response(result)
+
+    # ------------------------------------------------------------------
+    # Attachments / Convenience
+    # ------------------------------------------------------------------
+
+    def get_attachment(self, message_id: str, attachment_id: str) -> bytes:
+        """Get the raw data of a message attachment."""
+        request = self._resource.users().messages().attachments().get(
+            userId="me", messageId=message_id, id=attachment_id
+        )
+        result = self._execute_request(request)
+        data = result.get("data", "")
+        return base64.urlsafe_b64decode(data)
+
+    def mark_read(self, message_id: str) -> Message:
+        """Mark a message as read by removing the UNREAD label."""
+        return self.modify_message(message_id, remove_labels=["UNREAD"])
+
+    def mark_unread(self, message_id: str) -> Message:
+        """Mark a message as unread by adding the UNREAD label."""
+        return self.modify_message(message_id, add_labels=["UNREAD"])
+
+    def reply(
+        self,
+        message_id: str,
+        body: str,
+        html: bool = False,
+    ) -> Message:
+        """Reply to a message, preserving the thread.
+
+        Fetches the original message to extract the thread ID, subject,
+        and sender, then sends a reply within the same thread.
+        """
+        original = self.get_message(message_id)
+        thread_id = original.thread_id
+
+        # Extract headers from the original message payload
+        headers = {
+            h["name"].lower(): h["value"]
+            for h in original.payload.get("headers", [])
+        }
+        original_subject = headers.get("subject", "")
+        reply_to = headers.get("reply-to") or headers.get("from", "")
+
+        subject = original_subject
+        if not subject.lower().startswith("re:"):
+            subject = f"Re: {subject}"
+
+        message = MIMEText(body, "html" if html else "plain")
+        message["to"] = reply_to
+        message["subject"] = subject
+        message["In-Reply-To"] = headers.get("message-id", "")
+        message["References"] = headers.get("message-id", "")
+
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+        request = self._resource.users().messages().send(
+            userId="me", body={"raw": raw, "threadId": thread_id}
+        )
+        result = self._execute_request(request)
+        return Message.from_api_response(result)

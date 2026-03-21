@@ -72,3 +72,77 @@ class FormsService(BaseService):
         )
         result = self._execute_request(request)
         return BatchUpdateResponse.from_api_response(result)
+
+    # ------------------------------------------------------------------
+    # Questions / Form info
+    # ------------------------------------------------------------------
+
+    def add_question(
+        self,
+        form_id: str,
+        title: str,
+        question_type: str = "SHORT_ANSWER",
+        required: bool = False,
+        index: int | None = None,
+    ) -> BatchUpdateResponse:
+        """Add a question to a form.
+
+        ``question_type`` should be one of the Forms API question types,
+        e.g. ``"SHORT_ANSWER"``, ``"PARAGRAPH"``, ``"MULTIPLE_CHOICE"``,
+        ``"CHECKBOX"``, ``"DROP_DOWN"``, ``"SCALE"``, etc.
+        """
+        question_item: dict[str, Any] = {
+            "required": required,
+            question_type.lower(): {},
+        }
+
+        item: dict[str, Any] = {
+            "title": title,
+            "questionItem": {"question": question_item},
+        }
+
+        create_request: dict[str, Any] = {
+            "createItem": {
+                "item": item,
+                "location": {"index": index if index is not None else 0},
+            }
+        }
+        return self.batch_update(form_id, [create_request])
+
+    def delete_question(
+        self, form_id: str, question_index: int
+    ) -> BatchUpdateResponse:
+        """Delete a question (item) from a form by its index."""
+        return self.batch_update(
+            form_id,
+            [{"deleteItem": {"location": {"index": question_index}}}],
+        )
+
+    def update_form_info(
+        self,
+        form_id: str,
+        title: str | None = None,
+        description: str | None = None,
+    ) -> BatchUpdateResponse:
+        """Update the form's title and/or description."""
+        info: dict[str, Any] = {}
+        update_mask_parts: list[str] = []
+
+        if title is not None:
+            info["title"] = title
+            update_mask_parts.append("title")
+        if description is not None:
+            info["description"] = description
+            update_mask_parts.append("description")
+
+        return self.batch_update(
+            form_id,
+            [
+                {
+                    "updateFormInfo": {
+                        "info": info,
+                        "updateMask": ",".join(update_mask_parts),
+                    }
+                }
+            ],
+        )

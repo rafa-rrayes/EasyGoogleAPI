@@ -55,3 +55,76 @@ class DocsService(BaseService):
             }
         ]
         return self.batch_update(document_id, requests)
+
+    # ------------------------------------------------------------------
+    # Append / Images / Tables / Styling
+    # ------------------------------------------------------------------
+
+    def append_text(
+        self, document_id: str, text: str
+    ) -> BatchUpdateResponse:
+        """Append text at the end of the document.
+
+        Reads the document to determine the current end index, then
+        inserts text at that position.
+        """
+        doc = self.get_document(document_id)
+        body_content = doc.body.get("content", [])
+        end_index = body_content[-1].get("endIndex", 1) - 1 if body_content else 1
+        return self.insert_text(document_id, text, index=end_index)
+
+    def insert_image(
+        self, document_id: str, image_url: str, index: int = 1
+    ) -> BatchUpdateResponse:
+        """Insert an image from a URL at the given index."""
+        requests = [
+            {
+                "insertInlineImage": {
+                    "location": {"index": index},
+                    "uri": image_url,
+                }
+            }
+        ]
+        return self.batch_update(document_id, requests)
+
+    def insert_table(
+        self, document_id: str, rows: int, cols: int, index: int = 1
+    ) -> BatchUpdateResponse:
+        """Insert a table at the given index."""
+        requests = [
+            {
+                "insertTable": {
+                    "rows": rows,
+                    "columns": cols,
+                    "location": {"index": index},
+                }
+            }
+        ]
+        return self.batch_update(document_id, requests)
+
+    def apply_style(
+        self,
+        document_id: str,
+        start_index: int,
+        end_index: int,
+        style: dict,
+    ) -> BatchUpdateResponse:
+        """Apply a text style to a range of the document.
+
+        ``style`` should be a dict of Docs API TextStyle fields, e.g.
+        ``{"bold": True, "fontSize": {"magnitude": 14, "unit": "PT"}}``.
+        """
+        fields = ",".join(style.keys())
+        requests = [
+            {
+                "updateTextStyle": {
+                    "range": {
+                        "startIndex": start_index,
+                        "endIndex": end_index,
+                    },
+                    "textStyle": style,
+                    "fields": fields,
+                }
+            }
+        ]
+        return self.batch_update(document_id, requests)

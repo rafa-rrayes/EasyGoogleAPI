@@ -1,5 +1,6 @@
 """Google Calendar API wrapper."""
 
+import uuid
 from datetime import UTC, datetime, timezone
 from typing import Any
 
@@ -220,3 +221,65 @@ class CalendarService(BaseService):
         )
         result = self._execute_request(update_request)
         return Event.from_api_response(result)
+
+    # ------------------------------------------------------------------
+    # Quick-add / Recurring / Free-busy / Watch
+    # ------------------------------------------------------------------
+
+    def quick_add(
+        self, text: str, calendar_id: str = "primary"
+    ) -> Event:
+        """Create an event from a simple text string (natural language).
+
+        Example: ``quick_add("Lunch with Bob at noon tomorrow")``
+        """
+        request = self._resource.events().quickAdd(
+            calendarId=calendar_id, text=text
+        )
+        result = self._execute_request(request)
+        return Event.from_api_response(result)
+
+    def list_recurring_instances(
+        self, event_id: str, calendar_id: str = "primary"
+    ) -> list[Event]:
+        """List all instances of a recurring event."""
+        request = self._resource.events().instances(
+            calendarId=calendar_id, eventId=event_id
+        )
+        result = self._execute_request(request)
+        return [
+            Event.from_api_response(e)
+            for e in result.get("items", [])
+        ]
+
+    def get_freebusy(
+        self,
+        time_min: datetime,
+        time_max: datetime,
+        calendars: list[str],
+    ) -> dict[str, Any]:
+        """Query free/busy information for a set of calendars."""
+        body: dict[str, Any] = {
+            "timeMin": _to_rfc3339(time_min),
+            "timeMax": _to_rfc3339(time_max),
+            "items": [{"id": cal} for cal in calendars],
+        }
+        request = self._resource.freebusy().query(body=body)
+        return self._execute_request(request)
+
+    def watch(
+        self,
+        calendar_id: str,
+        webhook_url: str,
+        channel_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Subscribe to push notifications for calendar events."""
+        body: dict[str, Any] = {
+            "id": channel_id or str(uuid.uuid4()),
+            "type": "web_hook",
+            "address": webhook_url,
+        }
+        request = self._resource.events().watch(
+            calendarId=calendar_id, body=body
+        )
+        return self._execute_request(request)
