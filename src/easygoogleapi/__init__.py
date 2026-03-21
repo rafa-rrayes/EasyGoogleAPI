@@ -23,6 +23,7 @@ from ._exceptions import (
     TransientError,
 )
 from ._async_service import AsyncGoogleService
+from ._middleware import MiddlewareChain, RequestContext, ResponseContext
 from ._service import GoogleService
 from ._token_store import FileTokenStore, InMemoryTokenStore, TokenStore
 from ._types import CredentialType, ServiceName
@@ -69,6 +70,9 @@ __all__ = [
     "MaxRetriesExceededError",
     "RetryConfig",
     "PageIterator",
+    "MiddlewareChain",
+    "RequestContext",
+    "ResponseContext",
     "CredentialType",
     "ServiceName",
 ]

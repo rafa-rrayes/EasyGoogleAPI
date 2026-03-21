@@ -25,6 +25,7 @@ from ._auth import (
 )
 from ._base import RetryConfig
 from ._config import SERVICE_REGISTRY
+from ._middleware import MiddlewareChain
 from ._exceptions import (
     AuthenticationError,
     ServiceNotEnabledError,
@@ -100,6 +101,7 @@ class GoogleService:
             delay until ``authenticate()`` is called or a service is accessed.
         oauth_port: Port for OAuth callback server (default: 8080).
         retry_config: Configuration for retry behavior. Uses defaults if None.
+        middleware: Optional ``MiddlewareChain`` with before/after request hooks.
         on_token_refresh: Callback invoked after a token is successfully refreshed.
             Receives the ``Credentials`` object as its only argument.
         on_token_expired: Callback invoked when a refresh token has been revoked
@@ -116,6 +118,7 @@ class GoogleService:
         auto_auth: bool = True,
         oauth_port: int = 8080,
         retry_config: RetryConfig | None = None,
+        middleware: MiddlewareChain | None = None,
         *,
         client_config: dict[str, Any] | None = None,
         scopes: list[str] | dict[str, list[str]] | None = None,
@@ -149,6 +152,7 @@ class GoogleService:
         self._oauth_state: str | None = None
         self._oauth_port = oauth_port
         self._retry_config = retry_config or RetryConfig()
+        self._middleware = middleware
         self._on_token_refresh = on_token_refresh
         self._on_token_expired = on_token_expired
 
@@ -526,6 +530,7 @@ class GoogleService:
         return CalendarService(
             self._build_service("calendar"),
             retry_config=self._retry_config,
+            middleware=self._middleware,
         )
 
     @cached_property
@@ -535,6 +540,7 @@ class GoogleService:
         return DocsService(
             self._build_service("docs"),
             retry_config=self._retry_config,
+            middleware=self._middleware,
         )
 
     @cached_property
@@ -544,6 +550,7 @@ class GoogleService:
         return DriveService(
             self._build_service("drive"),
             retry_config=self._retry_config,
+            middleware=self._middleware,
         )
 
     @cached_property
@@ -553,6 +560,7 @@ class GoogleService:
         return FormsService(
             self._build_service("forms"),
             retry_config=self._retry_config,
+            middleware=self._middleware,
         )
 
     @cached_property
@@ -562,6 +570,7 @@ class GoogleService:
         return GmailService(
             self._build_service("gmail"),
             retry_config=self._retry_config,
+            middleware=self._middleware,
         )
 
     @cached_property
@@ -578,4 +587,5 @@ class GoogleService:
         return SheetsService(
             self._build_service("sheets"),
             retry_config=self._retry_config,
+            middleware=self._middleware,
         )
