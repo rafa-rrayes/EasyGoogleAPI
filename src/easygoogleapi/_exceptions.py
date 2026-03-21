@@ -1,9 +1,11 @@
 """Custom exceptions for EasyGoogleAPI."""
 
+from typing import Any
+
 
 class EasyGoogleAPIError(Exception):
     """Base exception for all EasyGoogleAPI errors.
-    
+
     Attributes:
         message: Human-readable error message.
         status_code: HTTP status code if applicable.
@@ -34,7 +36,7 @@ class AuthenticationError(EasyGoogleAPIError):
     def __init__(
         self,
         message: str = "Authentication failed",
-        **kwargs,
+        **kwargs: Any,
     ):
         super().__init__(message, retryable=False, **kwargs)
 
@@ -45,7 +47,7 @@ class InvalidCredentialsError(AuthenticationError):
     def __init__(
         self,
         message: str = "Invalid credentials",
-        **kwargs,
+        **kwargs: Any,
     ):
         super().__init__(message, **kwargs)
 
@@ -56,7 +58,7 @@ class TokenExpiredError(AuthenticationError):
     def __init__(
         self,
         message: str = "Token expired and cannot be refreshed",
-        **kwargs,
+        **kwargs: Any,
     ):
         super().__init__(message, **kwargs)
 
@@ -73,7 +75,7 @@ class TokenRevokedError(AuthenticationError):
     def __init__(
         self,
         message: str = "Token has been revoked — re-authentication required",
-        **kwargs,
+        **kwargs: Any,
     ):
         super().__init__(message, **kwargs)
 
@@ -94,7 +96,7 @@ class ServiceNotEnabledError(EasyGoogleAPIError):
 
 class APIError(EasyGoogleAPIError):
     """Wrapper for Google API errors with additional context.
-    
+
     Attributes:
         original_error: The underlying exception from Google API client.
     """
@@ -103,7 +105,7 @@ class APIError(EasyGoogleAPIError):
         self,
         message: str,
         original_error: Exception | None = None,
-        **kwargs,
+        **kwargs: Any,
     ):
         super().__init__(message, **kwargs)
         self.original_error = original_error
@@ -114,21 +116,21 @@ class APIError(EasyGoogleAPIError):
 
 class TransientError(APIError):
     """Temporary error that can be retried.
-    
+
     This includes network errors, temporary server issues, and rate limits.
     """
 
-    def __init__(self, message: str, **kwargs):
+    def __init__(self, message: str, **kwargs: Any):
         kwargs.setdefault("retryable", True)
         super().__init__(message, **kwargs)
 
 
 class RateLimitError(TransientError):
     """Rate limit exceeded error.
-    
+
     Google APIs return HTTP 429 when rate limits are hit. This error
     includes retry_after information when available.
-    
+
     Attributes:
         retry_after: Seconds to wait before retrying (from Retry-After header).
     """
@@ -137,7 +139,7 @@ class RateLimitError(TransientError):
         self,
         message: str = "Rate limit exceeded",
         retry_after: int | None = None,
-        **kwargs,
+        **kwargs: Any,
     ):
         kwargs.setdefault("status_code", 429)
         kwargs.setdefault("reason", "rateLimitExceeded")
@@ -147,14 +149,14 @@ class RateLimitError(TransientError):
 
 class ServerError(TransientError):
     """Google API server error (5xx status codes).
-    
+
     These are temporary failures on Google's side and are safe to retry.
     """
 
     def __init__(
         self,
         message: str = "Server error",
-        **kwargs,
+        **kwargs: Any,
     ):
         super().__init__(message, **kwargs)
 
@@ -165,7 +167,7 @@ class BackendError(ServerError):
     def __init__(
         self,
         message: str = "Backend error",
-        **kwargs,
+        **kwargs: Any,
     ):
         kwargs.setdefault("status_code", 503)
         kwargs.setdefault("reason", "backendError")
@@ -177,18 +179,18 @@ class BackendError(ServerError):
 
 class PermanentError(APIError):
     """Permanent error that should not be retried.
-    
+
     This includes authentication failures, permission errors, and invalid requests.
     """
 
-    def __init__(self, message: str, **kwargs):
+    def __init__(self, message: str, **kwargs: Any):
         kwargs.setdefault("retryable", False)
         super().__init__(message, **kwargs)
 
 
 class PermissionDeniedError(PermanentError):
     """Insufficient permissions to perform the operation.
-    
+
     The authenticated user does not have the required permissions.
     This requires granting additional scopes or permissions.
     """
@@ -196,7 +198,7 @@ class PermissionDeniedError(PermanentError):
     def __init__(
         self,
         message: str = "Permission denied",
-        **kwargs,
+        **kwargs: Any,
     ):
         kwargs.setdefault("status_code", 403)
         kwargs.setdefault("reason", "forbidden")
@@ -205,14 +207,14 @@ class PermissionDeniedError(PermanentError):
 
 class NotFoundError(PermanentError):
     """Requested resource was not found.
-    
+
     The resource (file, event, etc.) does not exist or has been deleted.
     """
 
     def __init__(
         self,
         message: str = "Resource not found",
-        **kwargs,
+        **kwargs: Any,
     ):
         kwargs.setdefault("status_code", 404)
         kwargs.setdefault("reason", "notFound")
@@ -221,11 +223,11 @@ class NotFoundError(PermanentError):
 
 class QuotaExceededError(PermanentError):
     """Quota limit reached.
-    
+
     The request exceeded a quota limit. Unlike rate limits, quota errors
     typically require waiting for the quota to reset (daily, hourly, etc.)
     or upgrading the quota limit.
-    
+
     Attributes:
         quota_type: Type of quota exceeded (e.g., 'queriesPerDay').
         limit: The quota limit, if available.
@@ -236,7 +238,7 @@ class QuotaExceededError(PermanentError):
         message: str = "Quota exceeded",
         quota_type: str | None = None,
         limit: int | None = None,
-        **kwargs,
+        **kwargs: Any,
     ):
         kwargs.setdefault("status_code", 429)
         kwargs.setdefault("reason", "quotaExceeded")
@@ -247,14 +249,14 @@ class QuotaExceededError(PermanentError):
 
 class InvalidRequestError(PermanentError):
     """Invalid request parameters.
-    
+
     The request is malformed or contains invalid parameters.
     """
 
     def __init__(
         self,
         message: str = "Invalid request",
-        **kwargs,
+        **kwargs: Any,
     ):
         kwargs.setdefault("status_code", 400)
         kwargs.setdefault("reason", "badRequest")
@@ -263,7 +265,7 @@ class InvalidRequestError(PermanentError):
 
 class ConflictError(PermanentError):
     """Request conflicts with current state.
-    
+
     The operation cannot be completed due to a conflict with the current
     state of the resource (e.g., trying to create a resource that already exists).
     """
@@ -271,7 +273,7 @@ class ConflictError(PermanentError):
     def __init__(
         self,
         message: str = "Conflict",
-        **kwargs,
+        **kwargs: Any,
     ):
         kwargs.setdefault("status_code", 409)
         kwargs.setdefault("reason", "conflict")
@@ -280,9 +282,9 @@ class ConflictError(PermanentError):
 
 class MaxRetriesExceededError(EasyGoogleAPIError):
     """Maximum retry attempts exceeded.
-    
+
     The operation was retried the maximum number of times but still failed.
-    
+
     Attributes:
         attempts: Number of attempts made.
         last_error: The last error encountered.

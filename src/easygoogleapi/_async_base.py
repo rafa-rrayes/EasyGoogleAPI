@@ -39,7 +39,7 @@ class AsyncBaseService:
         if attempt >= self._retry_config.max_retries:
             return False
         status = error.resp.status
-        return status == 429 or status >= 500
+        return bool(status == 429 or status >= 500)
 
     def _calculate_backoff(self, attempt: int, error: HttpError | None = None) -> float:
         if error and error.resp.status == 429:
@@ -76,7 +76,7 @@ class AsyncBaseService:
                 wrapped_error = self._wrap_http_error(e)
 
                 if not self._should_retry(e, attempt):
-                    raise wrapped_error
+                    raise wrapped_error from e
 
                 delay = self._calculate_backoff(attempt, e)
                 logger.warning(

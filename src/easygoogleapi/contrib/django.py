@@ -62,8 +62,13 @@ class DjangoModelTokenStore:
     def get(self, user_id: str) -> dict[str, Any] | None:
         """Retrieve token data for *user_id*, or ``None``."""
         try:
-            obj = self._model.objects.get(**{self._user_id_field: user_id})
-            return getattr(obj, self._token_data_field)
+            obj = self._model.objects.get(
+                **{self._user_id_field: user_id}
+            )
+            data: dict[str, Any] = getattr(
+                obj, self._token_data_field
+            )
+            return data
         except self._model.DoesNotExist:
             return None
 
@@ -76,6 +81,7 @@ class DjangoModelTokenStore:
 
     def delete(self, user_id: str) -> bool:
         """Delete the token row for *user_id*. Returns ``True`` if deleted."""
+        deleted_count: int
         deleted_count, _ = self._model.objects.filter(
             **{self._user_id_field: user_id}
         ).delete()

@@ -1,6 +1,6 @@
 """Integration tests for Calendar service."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -29,7 +29,7 @@ class TestCalendarService:
 
     def test_create_and_delete_event(self, google_calendar):
         """Test creating and deleting an event."""
-        start = datetime.now(timezone.utc) + timedelta(days=1)
+        start = datetime.now(UTC) + timedelta(days=1)
         end = start + timedelta(hours=1)
 
         # Create event
@@ -48,7 +48,7 @@ class TestCalendarService:
 
     def test_create_event_with_attendees(self, google_calendar):
         """Test creating an event with attendees."""
-        start = datetime.now(timezone.utc) + timedelta(days=1)
+        start = datetime.now(UTC) + timedelta(days=1)
         end = start + timedelta(hours=1)
 
         event = google_calendar.calendar.create_event(
@@ -64,7 +64,7 @@ class TestCalendarService:
 
     def test_update_event(self, google_calendar):
         """Test updating an event."""
-        start = datetime.now(timezone.utc) + timedelta(days=1)
+        start = datetime.now(UTC) + timedelta(days=1)
         end = start + timedelta(hours=1)
 
         # Create event

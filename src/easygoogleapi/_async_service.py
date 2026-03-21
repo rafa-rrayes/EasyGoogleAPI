@@ -6,24 +6,23 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any
 
+from google.auth.credentials import Credentials as BaseCredentials
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import Flow, InstalledAppFlow
+from google_auth_oauthlib.flow import (
+    Flow,
+    InstalledAppFlow,
+)
 from googleapiclient.discovery import build
 
-from ._async_base import AsyncBaseService
 from ._auth import (
-    delete_token_from_store,
     detect_credential_type,
-    get_auth_url as _get_auth_url,
     get_oauth_credentials_from_store,
     get_service_account_credentials,
     normalize_client_config,
-    save_token_to_store,
 )
 from ._base import RetryConfig
 from ._config import SERVICE_REGISTRY
 from ._exceptions import (
-    AuthenticationError,
     ServiceNotEnabledError,
     TokenRevokedError,
 )
@@ -78,7 +77,9 @@ def _create_async_service_class(
     return async_cls
 
 
-AsyncCalendarService = _create_async_service_class(_SyncCalendar, "AsyncCalendarService")
+AsyncCalendarService = _create_async_service_class(
+    _SyncCalendar, "AsyncCalendarService",
+)
 AsyncDocsService = _create_async_service_class(_SyncDocs, "AsyncDocsService")
 AsyncDriveService = _create_async_service_class(_SyncDrive, "AsyncDriveService")
 AsyncFormsService = _create_async_service_class(_SyncForms, "AsyncFormsService")
@@ -124,14 +125,16 @@ class AsyncGoogleService:
             )
 
         if credentials_path is not None:
-            self._credentials_path: Path | None = Path(credentials_path).expanduser().resolve()
+            self._credentials_path: Path | None = (
+                Path(credentials_path).expanduser().resolve()
+            )
             self._client_config: dict[str, Any] | None = None
         else:
             self._credentials_path = None
             self._client_config = normalize_client_config(client_config)  # type: ignore[arg-type]
 
         self._enabled_services: list[ServiceName] = list(services)
-        self._credentials: Credentials | None = None
+        self._credentials: BaseCredentials | None = None
         self._oauth_flow: Flow | InstalledAppFlow | None = None
         self._oauth_port = oauth_port
         self._retry_config = retry_config or RetryConfig()
@@ -225,7 +228,7 @@ class AsyncGoogleService:
     def calendar(self) -> Any:
         """Access the async Google Calendar API."""
         if "calendar" not in self._enabled_services:
-            raise ServiceNotEnabledError("calendar", self._enabled_services)
+            raise ServiceNotEnabledError("calendar", list(self._enabled_services))
         return AsyncCalendarService(
             self._build_service("calendar"), retry_config=self._retry_config,
         )
@@ -234,7 +237,7 @@ class AsyncGoogleService:
     def docs(self) -> Any:
         """Access the async Google Docs API."""
         if "docs" not in self._enabled_services:
-            raise ServiceNotEnabledError("docs", self._enabled_services)
+            raise ServiceNotEnabledError("docs", list(self._enabled_services))
         return AsyncDocsService(
             self._build_service("docs"), retry_config=self._retry_config,
         )
@@ -243,7 +246,7 @@ class AsyncGoogleService:
     def drive(self) -> Any:
         """Access the async Google Drive API."""
         if "drive" not in self._enabled_services:
-            raise ServiceNotEnabledError("drive", self._enabled_services)
+            raise ServiceNotEnabledError("drive", list(self._enabled_services))
         return AsyncDriveService(
             self._build_service("drive"), retry_config=self._retry_config,
         )
@@ -252,7 +255,7 @@ class AsyncGoogleService:
     def forms(self) -> Any:
         """Access the async Google Forms API."""
         if "forms" not in self._enabled_services:
-            raise ServiceNotEnabledError("forms", self._enabled_services)
+            raise ServiceNotEnabledError("forms", list(self._enabled_services))
         return AsyncFormsService(
             self._build_service("forms"), retry_config=self._retry_config,
         )
@@ -261,7 +264,7 @@ class AsyncGoogleService:
     def gmail(self) -> Any:
         """Access the async Gmail API."""
         if "gmail" not in self._enabled_services:
-            raise ServiceNotEnabledError("gmail", self._enabled_services)
+            raise ServiceNotEnabledError("gmail", list(self._enabled_services))
         return AsyncGmailService(
             self._build_service("gmail"), retry_config=self._retry_config,
         )
@@ -270,7 +273,7 @@ class AsyncGoogleService:
     def sheets(self) -> Any:
         """Access the async Google Sheets API."""
         if "sheets" not in self._enabled_services:
-            raise ServiceNotEnabledError("sheets", self._enabled_services)
+            raise ServiceNotEnabledError("sheets", list(self._enabled_services))
         return AsyncSheetsService(
             self._build_service("sheets"), retry_config=self._retry_config,
         )

@@ -21,8 +21,11 @@ class SheetsService(BaseService):
             range=range,
             valueRenderOption=value_render_option,
         )
-        result = self._execute_request(request)
-        return result.get("values", [])
+        result: dict[str, Any] = (
+            self._execute_request(request)
+        )
+        values: list[list[Any]] = result.get("values", [])
+        return values
 
     def write_range(
         self,
@@ -92,10 +95,17 @@ class SheetsService(BaseService):
         self, spreadsheet_id: str, range: str
     ) -> dict[str, Any]:
         """Clear values from a range."""
-        request = self._resource.spreadsheets().values().clear(
-            spreadsheetId=spreadsheet_id, range=range, body={}
+        request = (
+            self._resource.spreadsheets().values().clear(
+                spreadsheetId=spreadsheet_id,
+                range=range,
+                body={},
+            )
         )
-        return self._execute_request(request)
+        result: dict[str, Any] = (
+            self._execute_request(request)
+        )
+        return result
 
     def add_sheet(
         self,

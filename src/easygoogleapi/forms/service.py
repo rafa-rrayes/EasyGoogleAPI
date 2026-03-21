@@ -26,10 +26,21 @@ class FormsService(BaseService):
             kwargs: dict[str, Any] = {"formId": form_id, "pageSize": page_size}
             if page_token:
                 kwargs["pageToken"] = page_token
-            request = self._resource.forms().responses().list(**kwargs)
-            return self._execute_request(request)
+            request = (
+                self._resource.forms().responses().list(
+                    **kwargs
+                )
+            )
+            result: dict[str, Any] = (
+                self._execute_request(request)
+            )
+            return result
 
-        return PageIterator(fetch_page, items_key="responses", model_class=FormResponse)
+        return PageIterator(
+            fetch_page,
+            items_key="responses",
+            model_class=FormResponse,
+        )
 
     def list_responses_page(
         self,

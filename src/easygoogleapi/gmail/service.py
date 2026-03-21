@@ -33,15 +33,18 @@ class GmailService(BaseService):
         if isinstance(to, list):
             to = ", ".join(to)
 
+        message: MIMEBase
         if attachments:
-            message = MIMEMultipart()
-            message.attach(
+            msg_mp = MIMEMultipart()
+            msg_mp.attach(
                 MIMEText(body, "html" if html else "plain")
             )
             for attachment_path in attachments:
                 attachment_path = Path(attachment_path)
                 with open(attachment_path, "rb") as f:
-                    part = MIMEBase("application", "octet-stream")
+                    part = MIMEBase(
+                        "application", "octet-stream"
+                    )
                     part.set_payload(f.read())
                 encoders.encode_base64(part)
                 part.add_header(
@@ -49,9 +52,12 @@ class GmailService(BaseService):
                     "attachment",
                     filename=attachment_path.name,
                 )
-                message.attach(part)
+                msg_mp.attach(part)
+            message = msg_mp
         else:
-            message = MIMEText(body, "html" if html else "plain")
+            message = MIMEText(
+                body, "html" if html else "plain"
+            )
 
         message["to"] = to
         message["subject"] = subject
@@ -92,10 +98,19 @@ class GmailService(BaseService):
                 kwargs["labelIds"] = label_ids
             if page_token:
                 kwargs["pageToken"] = page_token
-            request = self._resource.users().messages().list(**kwargs)
-            return self._execute_request(request)
+            request = (
+                self._resource.users().messages().list(**kwargs)
+            )
+            result: dict[str, Any] = (
+                self._execute_request(request)
+            )
+            return result
 
-        return PageIterator(fetch_page, items_key="messages", model_class=Message)
+        return PageIterator(
+            fetch_page,
+            items_key="messages",
+            model_class=Message,
+        )
 
     def list_messages_page(
         self,
@@ -131,7 +146,10 @@ class GmailService(BaseService):
         """List all labels."""
         request = self._resource.users().labels().list(userId="me")
         result = self._execute_request(request)
-        return [Label.from_api_response(l) for l in result.get("labels", [])]
+        return [
+            Label.from_api_response(lbl)
+            for lbl in result.get("labels", [])
+        ]
 
     def trash_message(self, message_id: str) -> Message:
         """Move a message to trash."""

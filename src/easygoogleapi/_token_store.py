@@ -138,7 +138,8 @@ class FileTokenStore(_BaseFileTokenStore):
         token_path = self._get_token_path(user_id, "json")
         if token_path.exists():
             with open(token_path) as f:
-                return json.load(f)
+                data: dict[str, Any] = json.load(f)
+            return data
         return None
 
     def save(self, user_id: str, token_data: dict[str, Any]) -> None:

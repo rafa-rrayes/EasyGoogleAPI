@@ -107,7 +107,7 @@ class DocsService(BaseService):
         document_id: str,
         start_index: int,
         end_index: int,
-        style: dict,
+        style: dict[str, Any],
     ) -> BatchUpdateResponse:
         """Apply a text style to a range of the document.
 

@@ -1,8 +1,8 @@
-"""Tests for PageIterator auto-pagination."""
+"""Tests for PageIterator and AsyncPageIterator auto-pagination."""
 
 import pytest
 
-from easygoogleapi._pagination import PageIterator
+from easygoogleapi._pagination import AsyncPageIterator, PageIterator
 from easygoogleapi.drive.models import FileMetadata
 
 
@@ -229,3 +229,224 @@ class TestPageIteratorEdgeCases:
         items = list(iterator)
 
         assert len(items) == 2
+
+
+# ── AsyncPageIterator tests ─────────────────────────────────
+
+
+class TestAsyncPageIteratorBasics:
+    """Tests for basic AsyncPageIterator behavior."""
+
+    @pytest.mark.asyncio
+    async def test_single_page_no_next_token(self):
+        """Test async iteration over a single page."""
+
+        async def fetch_page(page_token):
+            return {
+                "files": [{"id": "f1"}, {"id": "f2"}],
+            }
+
+        iterator = AsyncPageIterator(
+            fetch_page, items_key="files"
+        )
+        items = [item async for item in iterator]
+
+        assert len(items) == 2
+        assert items[0] == {"id": "f1"}
+        assert items[1] == {"id": "f2"}
+
+    @pytest.mark.asyncio
+    async def test_empty_result(self):
+        """Test async iteration over empty result set."""
+
+        async def fetch_page(page_token):
+            return {"files": []}
+
+        iterator = AsyncPageIterator(
+            fetch_page, items_key="files"
+        )
+        items = [item async for item in iterator]
+
+        assert items == []
+
+    @pytest.mark.asyncio
+    async def test_empty_result_with_no_key(self):
+        """Test async iteration when items key is absent."""
+
+        async def fetch_page(page_token):
+            return {}
+
+        iterator = AsyncPageIterator(
+            fetch_page, items_key="files"
+        )
+        items = [item async for item in iterator]
+
+        assert items == []
+
+
+class TestAsyncPageIteratorMultiplePages:
+    """Tests for async multi-page iteration."""
+
+    @pytest.mark.asyncio
+    async def test_iteration_over_three_pages(self):
+        """Test async iterator fetches across 3 pages."""
+        pages = [
+            {
+                "files": [{"id": "f1"}, {"id": "f2"}],
+                "nextPageToken": "token1",
+            },
+            {
+                "files": [{"id": "f3"}, {"id": "f4"}],
+                "nextPageToken": "token2",
+            },
+            {"files": [{"id": "f5"}]},
+        ]
+        call_count = 0
+
+        async def fetch_page(page_token):
+            nonlocal call_count
+            idx = call_count
+            call_count += 1
+            return pages[idx]
+
+        iterator = AsyncPageIterator(
+            fetch_page, items_key="files"
+        )
+        items = [item async for item in iterator]
+
+        assert len(items) == 5
+        assert [i["id"] for i in items] == [
+            "f1",
+            "f2",
+            "f3",
+            "f4",
+            "f5",
+        ]
+        assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_page_tokens_passed_correctly(self):
+        """Test that page tokens are forwarded correctly."""
+        received_tokens: list[str | None] = []
+
+        async def fetch_page(page_token):
+            received_tokens.append(page_token)
+            if page_token is None:
+                return {
+                    "items": [{"id": "1"}],
+                    "nextPageToken": "tok_a",
+                }
+            elif page_token == "tok_a":
+                return {
+                    "items": [{"id": "2"}],
+                    "nextPageToken": "tok_b",
+                }
+            else:
+                return {"items": [{"id": "3"}]}
+
+        iterator = AsyncPageIterator(
+            fetch_page, items_key="items"
+        )
+        _ = [item async for item in iterator]
+
+        assert received_tokens == [None, "tok_a", "tok_b"]
+
+
+class TestAsyncPageIteratorWithModels:
+    """Tests for AsyncPageIterator with typed model classes."""
+
+    @pytest.mark.asyncio
+    async def test_models_correctly_instantiated(self):
+        """Test that model_class wraps each item."""
+
+        async def fetch_page(page_token):
+            return {
+                "files": [
+                    {
+                        "id": "f1",
+                        "name": "test.txt",
+                        "mimeType": "text/plain",
+                    },
+                    {
+                        "id": "f2",
+                        "name": "doc.pdf",
+                        "mimeType": "application/pdf",
+                    },
+                ],
+            }
+
+        iterator = AsyncPageIterator(
+            fetch_page,
+            items_key="files",
+            model_class=FileMetadata,
+        )
+        items = [item async for item in iterator]
+
+        assert len(items) == 2
+        assert isinstance(items[0], FileMetadata)
+        assert isinstance(items[1], FileMetadata)
+        assert items[0].name == "test.txt"
+        assert items[1].mime_type == "application/pdf"
+
+    @pytest.mark.asyncio
+    async def test_models_across_pages(self):
+        """Test model instantiation across multiple pages."""
+        pages = [
+            {
+                "files": [{"id": "f1", "name": "a.txt"}],
+                "nextPageToken": "t1",
+            },
+            {"files": [{"id": "f2", "name": "b.txt"}]},
+        ]
+        idx = 0
+
+        async def fetch_page(page_token):
+            nonlocal idx
+            page = pages[idx]
+            idx += 1
+            return page
+
+        iterator = AsyncPageIterator(
+            fetch_page,
+            items_key="files",
+            model_class=FileMetadata,
+        )
+        items = [item async for item in iterator]
+
+        assert len(items) == 2
+        assert all(
+            isinstance(item, FileMetadata) for item in items
+        )
+        assert items[0].name == "a.txt"
+        assert items[1].name == "b.txt"
+
+
+class TestAsyncPageIteratorProtocol:
+    """Tests for async iterator protocol compliance."""
+
+    @pytest.mark.asyncio
+    async def test_aiter_returns_self(self):
+        """Test that __aiter__ returns self."""
+
+        async def fetch_page(page_token):
+            return {"items": [{"v": 1}]}
+
+        iterator = AsyncPageIterator(
+            fetch_page, items_key="items"
+        )
+        assert iterator.__aiter__() is iterator
+
+    @pytest.mark.asyncio
+    async def test_stop_async_iteration(self):
+        """Test StopAsyncIteration when exhausted."""
+
+        async def fetch_page(page_token):
+            return {"items": [{"v": 1}]}
+
+        iterator = AsyncPageIterator(
+            fetch_page, items_key="items"
+        )
+        await iterator.__anext__()
+
+        with pytest.raises(StopAsyncIteration):
+            await iterator.__anext__()

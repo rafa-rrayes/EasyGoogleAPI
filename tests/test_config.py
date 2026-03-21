@@ -1,6 +1,5 @@
 """Test configuration and service registry."""
 
-import pytest
 
 
 def test_service_registry_has_all_services():
@@ -32,7 +31,7 @@ def test_forms_has_static_discovery_false():
 
 def test_get_scopes_for_services():
     """Test scope aggregation for multiple services."""
-    from easygoogleapi._config import get_scopes_for_services, SERVICE_REGISTRY
+    from easygoogleapi._config import SERVICE_REGISTRY, get_scopes_for_services
 
     scopes = get_scopes_for_services(["calendar", "drive"])
 
@@ -88,7 +87,8 @@ class TestScopePresets:
         for service, scopes in readonly.items():
             for scope in scopes:
                 assert "readonly" in scope, (
-                    f"Readonly preset for {service} should use readonly scopes, got: {scope}"
+                    f"Readonly preset for {service} should use "
+                    f"readonly scopes, got: {scope}"
                 )
 
     def test_full_scopes_are_not_readonly(self):
@@ -99,7 +99,8 @@ class TestScopePresets:
         for service, scopes in full.items():
             for scope in scopes:
                 assert "readonly" not in scope, (
-                    f"Full preset for {service} should not use readonly scopes, got: {scope}"
+                    f"Full preset for {service} should not use "
+                    f"readonly scopes, got: {scope}"
                 )
 
     def test_presets_contain_only_valid_keys(self):

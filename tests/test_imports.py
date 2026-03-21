@@ -77,13 +77,13 @@ class TestExceptionImports:
     def test_import_base_exceptions(self):
         """Test importing base exception classes."""
         from easygoogleapi import (
-            EasyGoogleAPIError,
+            APIError,
             AuthenticationError,
+            EasyGoogleAPIError,
             InvalidCredentialsError,
+            ServiceNotEnabledError,
             TokenExpiredError,
             TokenRevokedError,
-            ServiceNotEnabledError,
-            APIError,
         )
         assert all([
             EasyGoogleAPIError,
@@ -98,22 +98,22 @@ class TestExceptionImports:
     def test_import_transient_errors(self):
         """Test importing transient error classes."""
         from easygoogleapi import (
-            TransientError,
+            BackendError,
             RateLimitError,
             ServerError,
-            BackendError,
+            TransientError,
         )
         assert all([TransientError, RateLimitError, ServerError, BackendError])
 
     def test_import_permanent_errors(self):
         """Test importing permanent error classes (new in v2.0)."""
         from easygoogleapi import (
+            ConflictError,
+            InvalidRequestError,
+            NotFoundError,
             PermanentError,
             PermissionDeniedError,
-            NotFoundError,
             QuotaExceededError,
-            InvalidRequestError,
-            ConflictError,
         )
         assert all([
             PermanentError,
@@ -141,13 +141,13 @@ class TestExceptionHierarchy:
     def test_base_hierarchy(self):
         """Test base exception hierarchy."""
         from easygoogleapi import (
-            EasyGoogleAPIError,
+            APIError,
             AuthenticationError,
+            EasyGoogleAPIError,
             InvalidCredentialsError,
+            ServiceNotEnabledError,
             TokenExpiredError,
             TokenRevokedError,
-            ServiceNotEnabledError,
-            APIError,
         )
 
         assert issubclass(AuthenticationError, EasyGoogleAPIError)
@@ -161,10 +161,10 @@ class TestExceptionHierarchy:
         """Test transient error hierarchy."""
         from easygoogleapi import (
             APIError,
-            TransientError,
+            BackendError,
             RateLimitError,
             ServerError,
-            BackendError,
+            TransientError,
         )
 
         assert issubclass(TransientError, APIError)
@@ -176,12 +176,12 @@ class TestExceptionHierarchy:
         """Test permanent error hierarchy."""
         from easygoogleapi import (
             APIError,
+            ConflictError,
+            InvalidRequestError,
+            NotFoundError,
             PermanentError,
             PermissionDeniedError,
-            NotFoundError,
             QuotaExceededError,
-            InvalidRequestError,
-            ConflictError,
         )
 
         assert issubclass(PermanentError, APIError)
@@ -203,10 +203,10 @@ class TestTokenStoreImports:
     def test_import_token_stores(self):
         """Test importing all current token store classes."""
         from easygoogleapi import (
-            TokenStore,
-            InMemoryTokenStore,
-            FileTokenStore,
             DjangoModelTokenStore,
+            FileTokenStore,
+            InMemoryTokenStore,
+            TokenStore,
         )
         assert all([
             TokenStore,

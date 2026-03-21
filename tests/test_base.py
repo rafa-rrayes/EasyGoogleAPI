@@ -1,7 +1,6 @@
 """Tests for BaseService — retry, backoff, error mapping (most critical gap)."""
 
 import json
-import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,14 +11,12 @@ from easygoogleapi._exceptions import (
     BackendError,
     ConflictError,
     InvalidRequestError,
-    MaxRetriesExceededError,
     NotFoundError,
     PermissionDeniedError,
     QuotaExceededError,
     RateLimitError,
     ServerError,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers for building mock HttpError objects
@@ -61,7 +58,10 @@ class _ConcreteService(BaseService):
 def service():
     """Create a ConcreteService with a mocked resource and default retry config."""
     resource = MagicMock()
-    return _ConcreteService(resource, retry_config=RetryConfig(max_retries=3, base_delay=0.01))
+    return _ConcreteService(
+        resource,
+        retry_config=RetryConfig(max_retries=3, base_delay=0.01),
+    )
 
 
 @pytest.fixture
@@ -200,7 +200,7 @@ class TestExecuteRequestMaxRetries:
 
     @patch("time.sleep")
     def test_exceeds_max_retries_raises(self, mock_sleep):
-        """Test that exceeding max retries raises the wrapped error on the last attempt."""
+        """Test that exceeding max retries raises wrapped error."""
         resource = MagicMock()
         svc = _ConcreteService(
             resource, retry_config=RetryConfig(max_retries=2, base_delay=0.01)
@@ -260,7 +260,10 @@ class TestCalculateBackoff:
         """Test that jitter=False produces deterministic delays."""
         resource = MagicMock()
         svc = _ConcreteService(
-            resource, retry_config=RetryConfig(jitter=False, base_delay=1.0, exponential_base=2.0)
+            resource,
+            retry_config=RetryConfig(
+                jitter=False, base_delay=1.0, exponential_base=2.0,
+            ),
         )
 
         delays = [svc._calculate_backoff(1) for _ in range(10)]
@@ -273,7 +276,10 @@ class TestCalculateBackoff:
         """Test that delay increases exponentially with attempt number."""
         resource = MagicMock()
         svc = _ConcreteService(
-            resource, retry_config=RetryConfig(jitter=False, base_delay=1.0, exponential_base=2.0)
+            resource,
+            retry_config=RetryConfig(
+                jitter=False, base_delay=1.0, exponential_base=2.0,
+            ),
         )
 
         d0 = svc._calculate_backoff(0)  # 1.0 * 2^0 = 1.0
@@ -313,7 +319,10 @@ class TestCalculateBackoff:
         """Test that non-numeric Retry-After falls back to exponential backoff."""
         resource = MagicMock()
         svc = _ConcreteService(
-            resource, retry_config=RetryConfig(jitter=False, base_delay=1.0, exponential_base=2.0)
+            resource,
+            retry_config=RetryConfig(
+                jitter=False, base_delay=1.0, exponential_base=2.0,
+            ),
         )
 
         error_429 = _make_http_error(
@@ -327,7 +336,10 @@ class TestCalculateBackoff:
         """Test that Retry-After is not used for non-429 errors."""
         resource = MagicMock()
         svc = _ConcreteService(
-            resource, retry_config=RetryConfig(jitter=False, base_delay=1.0, exponential_base=2.0)
+            resource,
+            retry_config=RetryConfig(
+                jitter=False, base_delay=1.0, exponential_base=2.0,
+            ),
         )
 
         error_500 = _make_http_error(
@@ -596,6 +608,7 @@ class TestExecuteRequestMiddleware:
     def test_correlation_id_is_uuid_format(self, mock_sleep):
         """Test that correlation_id assigned by _execute_request is UUID format."""
         import uuid
+
         from easygoogleapi._middleware import MiddlewareChain
 
         middleware = MiddlewareChain()

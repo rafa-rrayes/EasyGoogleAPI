@@ -6,7 +6,6 @@ import json
 import logging
 import random
 import time
-from abc import ABC
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -51,7 +50,7 @@ class RetryConfig:
     jitter: bool = True
 
 
-class BaseService(ABC):
+class BaseService:
     """Base class for all Google API service wrappers.
 
     Provides retry logic, error mapping, middleware integration,
@@ -78,7 +77,7 @@ class BaseService(ABC):
         if attempt >= self._retry_config.max_retries:
             return False
         status = error.resp.status
-        return status == 429 or status >= 500
+        return bool(status == 429 or status >= 500)
 
     def _calculate_backoff(self, attempt: int, error: HttpError | None = None) -> float:
         """Calculate backoff delay with exponential backoff and jitter."""
@@ -236,7 +235,7 @@ class BaseService(ABC):
                         f"[{correlation_id[:8]}] Non-retryable error: {e.reason}",
                         extra={"status": e.resp.status},
                     )
-                    raise wrapped_error
+                    raise wrapped_error from e
 
                 delay = self._calculate_backoff(attempt, e)
                 logger.warning(

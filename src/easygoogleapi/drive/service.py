@@ -4,7 +4,11 @@ import io
 from pathlib import Path
 from typing import Any, BinaryIO
 
-from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload, MediaIoBaseUpload
+from googleapiclient.http import (
+    MediaFileUpload,
+    MediaIoBaseDownload,
+    MediaIoBaseUpload,
+)
 
 from .._base import BaseService
 from .._pagination import PageIterator
@@ -41,7 +45,8 @@ class DriveService(BaseService):
         self,
         query: str | None = None,
         page_size: int = 100,
-        fields: str = "files(id, name, mimeType, modifiedTime, size, webViewLink, parents, trashed)",
+        fields: str = "files(id,name,mimeType,modifiedTime,"
+        "size,webViewLink,parents,trashed)",
         folder_id: str | None = None,
         order_by: str | None = None,
     ) -> PageIterator[FileMetadata]:
@@ -72,7 +77,10 @@ class DriveService(BaseService):
             if order_by:
                 kwargs["orderBy"] = order_by
             request = self._resource.files().list(**kwargs)
-            return self._execute_request(request)
+            result: dict[str, Any] = self._execute_request(
+                request
+            )
+            return result
 
         return PageIterator(fetch_page, items_key="files", model_class=FileMetadata)
 
@@ -80,7 +88,8 @@ class DriveService(BaseService):
         self,
         query: str | None = None,
         page_size: int = 100,
-        fields: str = "files(id, name, mimeType, modifiedTime, size, webViewLink, parents, trashed)",
+        fields: str = "files(id,name,mimeType,modifiedTime,"
+        "size,webViewLink,parents,trashed)",
         folder_id: str | None = None,
         page_token: str | None = None,
         order_by: str | None = None,
@@ -113,7 +122,7 @@ class DriveService(BaseService):
     def get_file(
         self,
         file_id: str,
-        fields: str = "id, name, mimeType, modifiedTime, size, webViewLink, parents, trashed",
+        fields: str = "id,name,mimeType,modifiedTime,size,webViewLink,parents,trashed",
     ) -> FileMetadata:
         """Get file metadata."""
         request = self._resource.files().get(fileId=file_id, fields=fields)
@@ -145,7 +154,9 @@ class DriveService(BaseService):
                 resumable=resumable,
             )
         else:
-            file_name = name or getattr(file, "name", "untitled")
+            file_name = name or str(
+                getattr(file, "name", "untitled")
+            )
             media = MediaIoBaseUpload(
                 file,
                 mimetype=mime_type or "application/octet-stream",

@@ -1,13 +1,12 @@
 """Tests for token store functionality (v2.0 — JSON-only, no pickle)."""
 
 import json
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
 import pytest
 
 from easygoogleapi._token_store import (
-    _BaseFileTokenStore,
     FileTokenStore,
     InMemoryTokenStore,
     TokenStore,
@@ -93,7 +92,7 @@ class TestFileTokenStore:
             store_dir = Path(tmpdir) / "tokens"
             assert not store_dir.exists()
 
-            store = FileTokenStore(store_dir)
+            FileTokenStore(store_dir)
 
             assert store_dir.exists()
             assert store_dir.is_dir()

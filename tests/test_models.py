@@ -3,9 +3,9 @@
 import pytest
 
 from easygoogleapi._models import GoogleModel
-from easygoogleapi.drive.models import FileMetadata, FileList, Permission, StorageQuota
-from easygoogleapi.calendar.models import Event, Attendee, CalendarMeta, EventList
-from easygoogleapi.gmail.models import Message, Label, MessageList, Thread, Draft
+from easygoogleapi.calendar.models import Attendee, CalendarMeta, Event, EventList
+from easygoogleapi.drive.models import FileList, FileMetadata, Permission, StorageQuota
+from easygoogleapi.gmail.models import Draft, Label, Message, MessageList, Thread
 
 
 class TestGoogleModelBase:
@@ -147,7 +147,9 @@ class TestPermission:
 
     def test_missing_email(self):
         """Test Permission with missing email."""
-        perm = Permission.from_api_response({"id": "p1", "role": "owner", "type": "user"})
+        perm = Permission.from_api_response(
+            {"id": "p1", "role": "owner", "type": "user"},
+        )
         assert perm.email_address is None
 
 
@@ -189,7 +191,11 @@ class TestEvent:
             "start": {"dateTime": "2025-01-15T10:00:00Z"},
             "end": {"dateTime": "2025-01-15T11:00:00Z"},
             "attendees": [
-                {"email": "a@example.com", "displayName": "Alice", "responseStatus": "accepted"},
+                {
+                    "email": "a@example.com",
+                    "displayName": "Alice",
+                    "responseStatus": "accepted",
+                },
             ],
             "status": "confirmed",
             "htmlLink": "https://calendar.google.com/...",
@@ -293,7 +299,9 @@ class TestLabel:
 
     def test_from_api_response(self):
         """Test Label.from_api_response."""
-        label = Label.from_api_response({"id": "INBOX", "name": "Inbox", "type": "system"})
+        label = Label.from_api_response(
+            {"id": "INBOX", "name": "Inbox", "type": "system"},
+        )
         assert label.id == "INBOX"
         assert label.name == "Inbox"
         assert label.type == "system"

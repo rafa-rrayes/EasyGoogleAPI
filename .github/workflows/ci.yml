@@ -13,3 +13,4 @@ jobs:
       - run: uv sync --dev
       - run: uv run pytest tests/ -m "not integration" --cov=easygoogleapi --cov-report=xml -v
       - run: uv run ruff check src/ tests/
+      - run: uv run mypy src/

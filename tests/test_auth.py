@@ -1,7 +1,6 @@
 """Test authentication logic (v2.0)."""
 
 import json
-from pathlib import Path
 
 import pytest
 

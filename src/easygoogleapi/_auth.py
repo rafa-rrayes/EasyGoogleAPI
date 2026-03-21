@@ -1,8 +1,8 @@
 """Authentication handling for Google APIs."""
 
 import json
-import urllib.request
 import urllib.parse
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -10,7 +10,10 @@ from typing import Any
 from google.auth.transport.requests import Request
 from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import Flow, InstalledAppFlow
+from google_auth_oauthlib.flow import (
+    Flow,
+    InstalledAppFlow,
+)
 
 from ._exceptions import AuthenticationError, InvalidCredentialsError
 from ._token_store import TokenStore
@@ -81,7 +84,9 @@ def detect_credential_type(credentials: Path | dict[str, Any]) -> CredentialType
             with open(credentials) as f:
                 data = json.load(f)
         except (json.JSONDecodeError, FileNotFoundError) as e:
-            raise InvalidCredentialsError(f"Cannot read credentials file: {e}")
+            raise InvalidCredentialsError(
+                f"Cannot read credentials file: {e}"
+            ) from e
 
     if data.get("type") == "service_account":
         return CredentialType.SERVICE_ACCOUNT
@@ -113,7 +118,7 @@ def credentials_to_dict(credentials: Credentials) -> dict[str, Any]:
 
 def dict_to_credentials(token_data: dict[str, Any]) -> Credentials:
     """Convert dictionary to Credentials object."""
-    creds = Credentials(
+    creds = Credentials(  # type: ignore[no-untyped-call]
         token=token_data.get("token"),
         refresh_token=token_data.get("refresh_token"),
         token_uri=token_data.get("token_uri"),
@@ -257,7 +262,8 @@ def exchange_code(
         The OAuth credentials.
     """
     flow.fetch_token(code=code)
-    return flow.credentials
+    creds: Credentials = flow.credentials
+    return creds
 
 
 def refresh_credentials(credentials: Credentials) -> Credentials:
@@ -268,7 +274,7 @@ def refresh_credentials(credentials: Credentials) -> Credentials:
         credentials.refresh(Request())
         return credentials
     except Exception as e:
-        raise AuthenticationError(f"Failed to refresh token: {e}")
+        raise AuthenticationError(f"Failed to refresh token: {e}") from e
 
 
 def revoke_credentials(credentials: Credentials) -> bool:
@@ -289,7 +295,7 @@ def revoke_credentials(credentials: Credentials) -> bool:
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
         with urllib.request.urlopen(req) as response:
-            return response.status == 200
+            return bool(response.status == 200)
     except Exception:
         return False
 
@@ -359,16 +365,17 @@ def get_service_account_credentials(
             "credentials_path is required for service account authentication"
         )
     try:
-        creds = service_account.Credentials.from_service_account_file(
+        creds = service_account.Credentials.from_service_account_file(  # type: ignore[no-untyped-call]
             str(credentials_path), scopes=scopes
         )
         if subject:
             creds = creds.with_subject(subject)
-        return creds
+        result: service_account.Credentials = creds
+        return result
     except Exception as e:
         raise AuthenticationError(
             f"Failed to load service account credentials: {e}"
-        )
+        ) from e
 
 
 def get_service_account_info(credentials_path: Path | None) -> dict[str, Any]:
@@ -377,6 +384,9 @@ def get_service_account_info(credentials_path: Path | None) -> dict[str, Any]:
         raise InvalidCredentialsError("No credentials path provided")
     try:
         with open(credentials_path) as f:
-            return json.load(f)
+            data: dict[str, Any] = json.load(f)
+        return data
     except Exception as e:
-        raise InvalidCredentialsError(f"Cannot read credentials file: {e}")
+        raise InvalidCredentialsError(
+            f"Cannot read credentials file: {e}"
+        ) from e

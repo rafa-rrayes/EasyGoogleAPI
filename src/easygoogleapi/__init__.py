@@ -1,7 +1,7 @@
 """EasyGoogleAPI — Simplified Python interface for Google APIs."""
 
+from ._async_service import AsyncGoogleService
 from ._base import RetryConfig
-from ._pagination import PageIterator
 from ._exceptions import (
     APIError,
     AuthenticationError,
@@ -22,8 +22,8 @@ from ._exceptions import (
     TokenRevokedError,
     TransientError,
 )
-from ._async_service import AsyncGoogleService
 from ._middleware import MiddlewareChain, RequestContext, ResponseContext
+from ._pagination import AsyncPageIterator, PageIterator
 from ._service import GoogleService
 from ._token_store import FileTokenStore, InMemoryTokenStore, TokenStore
 from ._types import CredentialType, ServiceName
@@ -69,6 +69,7 @@ __all__ = [
     "ConflictError",
     "MaxRetriesExceededError",
     "RetryConfig",
+    "AsyncPageIterator",
     "PageIterator",
     "MiddlewareChain",
     "RequestContext",

@@ -1,13 +1,12 @@
 """Unit tests for DriveService methods (mock-based, v2.0 typed models)."""
 
 import io
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from easygoogleapi.drive.models import FileList, FileMetadata, Permission, StorageQuota
 from easygoogleapi.drive.service import EXPORT_MIME_TYPES, DriveService
-from easygoogleapi.drive.models import FileMetadata, FileList, Permission, StorageQuota
 
 
 @pytest.fixture
@@ -256,7 +255,9 @@ class TestNewMethods:
 
     def test_create_shortcut(self, drive):
         drive._resource.files().create().execute.return_value = {
-            "id": "sc1", "name": "Shortcut", "mimeType": "application/vnd.google-apps.shortcut",
+            "id": "sc1",
+            "name": "Shortcut",
+            "mimeType": "application/vnd.google-apps.shortcut",
         }
         result = drive.create_shortcut("target_id", "Shortcut")
         assert isinstance(result, FileMetadata)

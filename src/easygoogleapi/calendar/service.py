@@ -1,7 +1,7 @@
 """Google Calendar API wrapper."""
 
 import uuid
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from .._base import BaseService
@@ -13,7 +13,7 @@ def _to_rfc3339(dt: datetime) -> str:
     """Convert a datetime to an RFC3339 string with timezone offset."""
     if dt.tzinfo is None:
         return dt.isoformat() + "Z"
-    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 class CalendarService(BaseService):
@@ -110,9 +110,16 @@ class CalendarService(BaseService):
             if page_token:
                 kwargs["pageToken"] = page_token
             request = self._resource.events().list(**kwargs)
-            return self._execute_request(request)
+            result: dict[str, Any] = (
+                self._execute_request(request)
+            )
+            return result
 
-        return PageIterator(fetch_page, items_key="items", model_class=Event)
+        return PageIterator(
+            fetch_page,
+            items_key="items",
+            model_class=Event,
+        )
 
     def list_events_page(
         self,
@@ -265,7 +272,10 @@ class CalendarService(BaseService):
             "items": [{"id": cal} for cal in calendars],
         }
         request = self._resource.freebusy().query(body=body)
-        return self._execute_request(request)
+        result: dict[str, Any] = (
+            self._execute_request(request)
+        )
+        return result
 
     def watch(
         self,
@@ -282,4 +292,7 @@ class CalendarService(BaseService):
         request = self._resource.events().watch(
             calendarId=calendar_id, body=body
         )
-        return self._execute_request(request)
+        result: dict[str, Any] = (
+            self._execute_request(request)
+        )
+        return result

@@ -2,8 +2,6 @@
 
 import uuid
 
-import pytest
-
 from easygoogleapi._middleware import (
     MiddlewareChain,
     RequestContext,
@@ -248,10 +246,17 @@ class TestMiddlewareChain:
                 "retried": ctx.retried,
             })
 
-        req = RequestContext(service_name="CalendarService", method_name="create_event", attempt=2)
+        req = RequestContext(
+            service_name="CalendarService",
+            method_name="create_event",
+            attempt=2,
+        )
         chain.fire_before(req)
 
-        resp = ResponseContext(request=req, duration_ms=150.5, status_code=200, retried=True)
+        resp = ResponseContext(
+            request=req, duration_ms=150.5,
+            status_code=200, retried=True,
+        )
         chain.fire_after(resp)
 
         assert before_data == [{

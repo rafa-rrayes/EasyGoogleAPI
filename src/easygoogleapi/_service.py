@@ -4,17 +4,19 @@ from collections.abc import Callable, Sequence
 from datetime import datetime
 from functools import cached_property
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+from google.auth.credentials import Credentials as BaseCredentials
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import Flow, InstalledAppFlow
+from google_auth_oauthlib.flow import (
+    Flow,
+    InstalledAppFlow,
+)
 from googleapiclient.discovery import build
 
 from ._auth import (
     delete_token_from_store,
     detect_credential_type,
-    exchange_code as _exchange_code,
-    get_auth_url as _get_auth_url,
     get_oauth_credentials_from_store,
     get_service_account_credentials,
     get_service_account_info,
@@ -23,14 +25,20 @@ from ._auth import (
     revoke_credentials,
     save_token_to_store,
 )
+from ._auth import (
+    exchange_code as _exchange_code,
+)
+from ._auth import (
+    get_auth_url as _get_auth_url,
+)
 from ._base import RetryConfig
 from ._config import SERVICE_REGISTRY
-from ._middleware import MiddlewareChain
 from ._exceptions import (
     AuthenticationError,
     ServiceNotEnabledError,
     TokenRevokedError,
 )
+from ._middleware import MiddlewareChain
 from ._token_store import FileTokenStore, InMemoryTokenStore, TokenStore
 from ._types import SCOPE_PRESETS, CredentialType, ServiceName
 from .calendar import CalendarService
@@ -140,14 +148,16 @@ class GoogleService:
             )
 
         if credentials_path is not None:
-            self._credentials_path: Path | None = Path(credentials_path).expanduser().resolve()
+            self._credentials_path: Path | None = (
+                Path(credentials_path).expanduser().resolve()
+            )
             self._client_config: dict[str, Any] | None = None
         else:
             self._credentials_path = None
             self._client_config = normalize_client_config(client_config)  # type: ignore[arg-type]
 
         self._enabled_services: list[ServiceName] = list(services)
-        self._credentials: Credentials | None = None
+        self._credentials: BaseCredentials | None = None
         self._oauth_flow: Flow | InstalledAppFlow | None = None
         self._oauth_state: str | None = None
         self._oauth_port = oauth_port
@@ -187,7 +197,7 @@ class GoogleService:
         if scopes is not None:
             if isinstance(scopes, dict):
                 combined: set[str] = set()
-                for svc, svc_scopes in scopes.items():
+                for _svc, svc_scopes in scopes.items():
                     combined.update(svc_scopes)
                 self._scopes = list(combined)
             else:
@@ -358,7 +368,8 @@ class GoogleService:
             raise AuthenticationError("Not authenticated")
 
         try:
-            self._credentials = refresh_credentials(self._credentials)
+            oauth_creds = cast(Credentials, self._credentials)
+            self._credentials = refresh_credentials(oauth_creds)
         except AuthenticationError as exc:
             if "invalid_grant" in str(exc):
                 revoked = TokenRevokedError()
@@ -381,7 +392,9 @@ class GoogleService:
         if self._credentials is None:
             return False
 
-        success = revoke_credentials(self._credentials)
+        success = revoke_credentials(
+            cast(Credentials, self._credentials),
+        )
         delete_token_from_store(self._token_store, self._user_id)  # type: ignore[arg-type]
         self._credentials = None
         self._clear_service_cache()
@@ -420,7 +433,8 @@ class GoogleService:
             info = get_service_account_info(self._credentials_path)
             return info.get("client_email")
         if hasattr(self._credentials, "_id_token") and self._credentials._id_token:
-            return self._credentials._id_token.get("email")
+            result: str | None = self._credentials._id_token.get("email")
+            return result
         return None
 
     @property
@@ -474,13 +488,14 @@ class GoogleService:
             self.authenticate()
             return
 
+        oauth_creds = cast(Credentials, self._credentials)
         if (
             self._credential_type == CredentialType.OAUTH
-            and self._credentials.expired
-            and self._credentials.refresh_token
+            and oauth_creds.expired
+            and oauth_creds.refresh_token
         ):
             try:
-                self._credentials = refresh_credentials(self._credentials)
+                self._credentials = refresh_credentials(oauth_creds)
                 save_token_to_store(
                     self._token_store, self._user_id, self._credentials  # type: ignore[arg-type]
                 )
@@ -497,7 +512,9 @@ class GoogleService:
     def _ensure_service_enabled(self, service_name: ServiceName) -> None:
         """Raise an error if the service was not enabled at initialization."""
         if service_name not in self._enabled_services:
-            raise ServiceNotEnabledError(service_name, self._enabled_services)
+            raise ServiceNotEnabledError(
+                service_name, list(self._enabled_services)
+            )
 
     def _build_service(self, service_name: ServiceName) -> Any:
         """Build a Google API service resource."""
@@ -578,7 +595,11 @@ class GoogleService:
         """Access the Google Meet API (gRPC-based)."""
         self._ensure_service_enabled("meet")
         self._ensure_authenticated()
-        return MeetService(credentials=self._credentials)
+        return MeetService(
+            credentials=self._credentials,
+            retry_config=self._retry_config,
+            middleware=self._middleware,
+        )
 
     @cached_property
     def sheets(self) -> SheetsService:

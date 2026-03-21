@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from easygoogleapi import GoogleService, AuthenticationError, TokenRevokedError
+from easygoogleapi import AuthenticationError, GoogleService
 from easygoogleapi._token_store import InMemoryTokenStore
 from easygoogleapi._types import CredentialType
 
@@ -49,7 +49,11 @@ class TestAuthControlUnit:
             "type": "service_account",
             "project_id": "test-project",
             "private_key_id": "key123",
-            "private_key": "-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----\n",
+            "private_key": (
+                "-----BEGIN RSA PRIVATE KEY-----\n"
+                "MIIE...\n"
+                "-----END RSA PRIVATE KEY-----\n"
+            ),
             "client_email": "test@test-project.iam.gserviceaccount.com",
             "client_id": "123456789",
         }
@@ -71,7 +75,11 @@ class TestAuthControlUnit:
             "type": "service_account",
             "project_id": "test-project",
             "private_key_id": "key123",
-            "private_key": "-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----\n",
+            "private_key": (
+                "-----BEGIN RSA PRIVATE KEY-----\n"
+                "MIIE...\n"
+                "-----END RSA PRIVATE KEY-----\n"
+            ),
             "client_email": "test@test-project.iam.gserviceaccount.com",
             "client_id": "123456789",
         }
@@ -93,7 +101,11 @@ class TestAuthControlUnit:
             "type": "service_account",
             "project_id": "test-project",
             "private_key_id": "key123",
-            "private_key": "-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----\n",
+            "private_key": (
+                "-----BEGIN RSA PRIVATE KEY-----\n"
+                "MIIE...\n"
+                "-----END RSA PRIVATE KEY-----\n"
+            ),
             "client_email": "test@test-project.iam.gserviceaccount.com",
             "client_id": "123456789",
         }
@@ -306,7 +318,10 @@ class TestAuthControlUnit:
         mock_creds.expiry = None
         google._credentials = mock_creds
 
-        with patch("easygoogleapi._service.refresh_credentials", return_value=mock_creds):
+        with patch(
+            "easygoogleapi._service.refresh_credentials",
+            return_value=mock_creds,
+        ):
             google.refresh_token()
 
         callback.assert_called_once_with(mock_creds)

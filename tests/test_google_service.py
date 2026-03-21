@@ -1,7 +1,6 @@
 """Test GoogleService class (v2.0)."""
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -34,7 +33,10 @@ class TestGoogleServiceValidation:
         try:
             GoogleService(
                 credentials_path=creds_file,
-                services=["calendar", "drive", "gmail", "sheets", "docs", "forms", "meet"],
+                services=[
+                    "calendar", "drive", "gmail",
+                    "sheets", "docs", "forms", "meet",
+                ],
                 auto_auth=False,
             )
         except ValueError as e:
@@ -46,7 +48,9 @@ class TestGoogleServiceValidation:
     def test_raises_when_both_credentials_path_and_client_config(self, tmp_path):
         """Test mutual exclusivity of credentials_path and client_config."""
         creds_file = tmp_path / "creds.json"
-        creds_file.write_text(json.dumps({"installed": {"client_id": "x", "client_secret": "y"}}))
+        creds_file.write_text(json.dumps(
+            {"installed": {"client_id": "x", "client_secret": "y"}}
+        ))
 
         with pytest.raises(ValueError, match="Cannot specify both"):
             GoogleService(
