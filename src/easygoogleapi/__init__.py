@@ -22,6 +22,7 @@ from ._exceptions import (
     TokenRevokedError,
     TransientError,
 )
+from ._async_service import AsyncGoogleService
 from ._service import GoogleService
 from ._token_store import FileTokenStore, InMemoryTokenStore, TokenStore
 from ._types import CredentialType, ServiceName
@@ -36,6 +37,7 @@ from .sheets import SheetsService
 
 __all__ = [
     "GoogleService",
+    "AsyncGoogleService",
     "CalendarService",
     "DocsService",
     "DriveService",
