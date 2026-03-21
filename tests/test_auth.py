@@ -1,4 +1,4 @@
-"""Test authentication logic."""
+"""Test authentication logic (v2.0)."""
 
 import json
 from pathlib import Path
@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from easygoogleapi._auth import (
+    create_oauth_flow,
     detect_credential_type,
     normalize_client_config,
 )
@@ -71,7 +72,7 @@ class TestDetectCredentialType:
         with pytest.raises(InvalidCredentialsError):
             detect_credential_type(creds_file)
 
-    # ---- New: dict-based credential detection ----
+    # ---- Dict-based credential detection ----
 
     def test_detects_oauth_web_from_dict(self):
         """Test detection of OAuth web config from an in-memory dict."""
@@ -141,3 +142,64 @@ class TestNormalizeClientConfig:
         """Dict without required keys raises."""
         with pytest.raises(InvalidCredentialsError):
             normalize_client_config({"bad": "data"})
+
+
+class TestPKCE:
+    """Tests for PKCE support in OAuth flows (v2.0)."""
+
+    def test_pkce_enabled_by_default(self, tmp_path):
+        """Test that PKCE is enabled by default (autogenerate_code_verifier=True)."""
+        creds = {
+            "installed": {
+                "client_id": "xxx",
+                "client_secret": "yyy",
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        }
+        creds_file = tmp_path / "creds.json"
+        creds_file.write_text(json.dumps(creds))
+
+        flow = create_oauth_flow(
+            creds_file,
+            scopes=["https://www.googleapis.com/auth/calendar"],
+        )
+        assert flow.autogenerate_code_verifier is True
+
+    def test_pkce_enabled_with_dict_config(self):
+        """Test that PKCE is enabled when using dict config."""
+        config = {
+            "web": {
+                "client_id": "xxx",
+                "client_secret": "yyy",
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        }
+
+        flow = create_oauth_flow(
+            config,
+            scopes=["https://www.googleapis.com/auth/drive"],
+        )
+        assert flow.autogenerate_code_verifier is True
+
+    def test_pkce_can_be_disabled(self, tmp_path):
+        """Test that PKCE can be explicitly disabled."""
+        creds = {
+            "installed": {
+                "client_id": "xxx",
+                "client_secret": "yyy",
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        }
+        creds_file = tmp_path / "creds.json"
+        creds_file.write_text(json.dumps(creds))
+
+        flow = create_oauth_flow(
+            creds_file,
+            scopes=["https://www.googleapis.com/auth/calendar"],
+            pkce=False,
+        )
+        # When pkce=False, autogenerate_code_verifier should not be True
+        assert not getattr(flow, "autogenerate_code_verifier", False)

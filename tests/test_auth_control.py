@@ -306,7 +306,7 @@ class TestAuthControlUnit:
         mock_creds.expiry = None
         google._credentials = mock_creds
 
-        with patch("easygoogleapi.refresh_credentials", return_value=mock_creds):
+        with patch("easygoogleapi._service.refresh_credentials", return_value=mock_creds):
             google.refresh_token()
 
         callback.assert_called_once_with(mock_creds)
