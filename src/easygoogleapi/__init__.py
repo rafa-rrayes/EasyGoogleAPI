@@ -39,29 +39,27 @@ from collections.abc import Callable, Sequence
 from datetime import datetime
 from functools import cached_property
 from pathlib import Path
+from typing import Any
 
 from google.auth.exceptions import RefreshError
+from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow, InstalledAppFlow
 from googleapiclient.discovery import build
 
 from ._auth import (
     credentials_to_dict,
-    delete_token,
     delete_token_from_store,
     detect_credential_type,
     dict_to_credentials,
     exchange_code,
     get_auth_url,
-    get_oauth_credentials,
     get_oauth_credentials_from_store,
     get_service_account_credentials,
     get_service_account_info,
-    load_token,
     load_token_from_store,
     normalize_client_config,
     refresh_credentials,
     revoke_credentials,
-    save_token,
     save_token_to_store,
 )
 from ._base import RetryConfig
@@ -85,8 +83,8 @@ from ._exceptions import (
     TokenRevokedError,
     TransientError,
 )
-from ._token_store import FileTokenStore, InMemoryTokenStore, JSONFileTokenStore, TokenStore
-from ._types import CredentialType, ServiceName
+from ._token_store import FileTokenStore, InMemoryTokenStore, TokenStore
+from ._types import SCOPE_PRESETS, CredentialType, ServiceName
 from .calendar import CalendarService
 from .contrib.django import DjangoModelTokenStore
 from .docs import DocsService
@@ -111,7 +109,6 @@ __all__ = [
     "TokenStore",
     "InMemoryTokenStore",
     "FileTokenStore",
-    "JSONFileTokenStore",
     "DjangoModelTokenStore",
     # Exceptions
     "EasyGoogleAPIError",
@@ -138,7 +135,7 @@ __all__ = [
     "ServiceName",
 ]
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 
 
 class GoogleService:
@@ -188,13 +185,14 @@ class GoogleService:
         scopes: Custom OAuth scopes. Can be a flat ``list[str]`` applied to all
             services, or a ``dict[str, list[str]]`` mapping service names to
             per-service scopes. If ``None`` (default), scopes are derived
-            automatically from the enabled services.
-        token_path: Custom path for storing OAuth tokens. Defaults to same
-            directory as credentials with ``_token.pickle`` suffix.
+            automatically from the enabled services using ``scope_preset``.
+        scope_preset: Scope preset to use when ``scopes`` is ``None``.
+            ``"full"`` (default) uses full-access scopes.
+            ``"readonly"`` uses read-only scopes where available.
         token_store: Pluggable token storage backend. If not provided, uses
-            file-based storage.
+            JSON file-based storage in the same directory as credentials.
         user_id: User identifier for multi-user scenarios. Auto-generated
-            from ``token_path`` if not provided.
+            from credentials path if not provided.
         auto_auth: If ``True`` (default), authenticate immediately. If ``False``,
             delay until ``authenticate()`` is called or a service is accessed.
         oauth_port: Port for OAuth callback server (default: 8080).
@@ -210,17 +208,17 @@ class GoogleService:
         self,
         credentials_path: str | Path | None = None,
         services: Sequence[ServiceName] = (),
-        token_path: str | Path | None = None,
         token_store: TokenStore | None = None,
         user_id: str | None = None,
         auto_auth: bool = True,
         oauth_port: int = 8080,
         retry_config: RetryConfig | None = None,
         *,
-        client_config: dict | None = None,
+        client_config: dict[str, Any] | None = None,
         scopes: list[str] | dict[str, list[str]] | None = None,
-        on_token_refresh: Callable | None = None,
-        on_token_expired: Callable | None = None,
+        scope_preset: str = "full",
+        on_token_refresh: Callable[[Credentials], None] | None = None,
+        on_token_expired: Callable[[TokenRevokedError], None] | None = None,
     ):
         # ------------------------------------------------------------------
         # Credential source validation
@@ -267,20 +265,14 @@ class GoogleService:
             self._user_id = user_id
             if self._user_id is None:
                 raise ValueError("user_id must be provided when using token_store")
-            self._token_path = None
         elif self._credentials_path is not None:
-            # Legacy single-user mode with file-based storage
-            if token_path:
-                self._token_path = Path(token_path).expanduser().resolve()
-            else:
-                self._token_path = self._credentials_path.with_name(
-                    self._credentials_path.stem + "_token.pickle"
-                )
-            self._token_store = FileTokenStore(directory=self._token_path.parent)
-            self._user_id = user_id or self._token_path.stem
+            # Default to JSON file-based storage alongside credentials
+            self._token_store = FileTokenStore(
+                directory=self._credentials_path.parent
+            )
+            self._user_id = user_id or self._credentials_path.stem
         else:
             # client_config without explicit token_store → in-memory store
-            self._token_path = None
             self._token_store = InMemoryTokenStore()
             self._user_id = user_id or "default"
 
@@ -296,7 +288,22 @@ class GoogleService:
             else:
                 self._scopes = list(scopes)
         else:
-            self._scopes = get_scopes_for_services(self._enabled_services)
+            # Use scope presets when no explicit scopes provided
+            if scope_preset not in SCOPE_PRESETS:
+                raise ValueError(
+                    f"Unknown scope_preset: '{scope_preset}'. "
+                    f"Valid presets: {list(SCOPE_PRESETS.keys())}"
+                )
+            preset = SCOPE_PRESETS[scope_preset]
+            scope_set: set[str] = set()
+            for svc in self._enabled_services:
+                if svc in preset:
+                    scope_set.update(preset[svc])
+                else:
+                    # Fall back to full scopes from registry for services
+                    # not in the preset (e.g. forms/meet in readonly)
+                    scope_set.update(SERVICE_REGISTRY[svc].scopes)
+            self._scopes = list(scope_set)
 
         # ------------------------------------------------------------------
         # Credential type detection
@@ -322,10 +329,11 @@ class GoogleService:
         oauth_port: int = 8080,
         retry_config: RetryConfig | None = None,
         *,
-        client_config: dict | None = None,
+        client_config: dict[str, Any] | None = None,
         scopes: list[str] | dict[str, list[str]] | None = None,
-        on_token_refresh: Callable | None = None,
-        on_token_expired: Callable | None = None,
+        scope_preset: str = "full",
+        on_token_refresh: Callable[[Credentials], None] | None = None,
+        on_token_expired: Callable[[TokenRevokedError], None] | None = None,
     ) -> "GoogleService":
         """Create GoogleService for a specific user with OAuth.
 
@@ -342,6 +350,7 @@ class GoogleService:
             retry_config: Configuration for retry behavior.
             client_config: In-memory client config (alternative to credentials_path).
             scopes: Custom OAuth scopes.
+            scope_preset: Scope preset (``"full"`` or ``"readonly"``).
             on_token_refresh: Callback after successful token refresh.
             on_token_expired: Callback when refresh token is revoked.
 
@@ -358,6 +367,7 @@ class GoogleService:
             retry_config=retry_config,
             client_config=client_config,
             scopes=scopes,
+            scope_preset=scope_preset,
             on_token_refresh=on_token_refresh,
             on_token_expired=on_token_expired,
         )

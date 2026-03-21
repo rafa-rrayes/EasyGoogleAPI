@@ -156,12 +156,15 @@ class BaseService(ABC):
         except Exception:
             pass
         
+        error_reason = error_details.get("code") if error_details else None
+        error_reason_str = error_details.get("reason", "") if error_details else ""
+
         # Map status codes to specific exceptions
         if status == 400:
             return InvalidRequestError(
                 reason,
                 status_code=status,
-                reason=error_details.get("code") if error_details else None,
+                reason=error_reason,
                 request_id=request_id,
                 original_error=error,
             )
@@ -188,7 +191,7 @@ class BaseService(ABC):
             )
         elif status == 429:
             # Could be rate limit or quota
-            if error_details and "quota" in error_details.get("reason", "").lower():
+            if "quota" in error_reason_str.lower():
                 return QuotaExceededError(
                     reason,
                     status_code=status,

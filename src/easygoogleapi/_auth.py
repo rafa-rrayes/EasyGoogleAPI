@@ -1,12 +1,12 @@
 """Authentication handling for Google APIs."""
 
 import json
-import pickle
+import urllib.request
+import urllib.parse
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import requests
 from google.auth.transport.requests import Request
 from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials
@@ -21,7 +21,7 @@ _DEFAULT_AUTH_URI = "https://accounts.google.com/o/oauth2/auth"
 _DEFAULT_TOKEN_URI = "https://oauth2.googleapis.com/token"
 
 
-def normalize_client_config(config: dict) -> dict:
+def normalize_client_config(config: dict[str, Any]) -> dict[str, Any]:
     """Normalize a client config dict to the canonical Google format.
 
     Accepts either the standard Google format (``{"web": {...}}`` or
@@ -62,7 +62,7 @@ def normalize_client_config(config: dict) -> dict:
     )
 
 
-def detect_credential_type(credentials: Path | dict) -> CredentialType:
+def detect_credential_type(credentials: Path | dict[str, Any]) -> CredentialType:
     """Detect whether credentials are OAuth or service account.
 
     Args:
@@ -158,45 +158,10 @@ def delete_token_from_store(token_store: TokenStore, user_id: str) -> bool:
     return token_store.delete(user_id)
 
 
-# Legacy file-based functions (kept for backwards compatibility)
-
-
-def load_token(token_path: Path) -> Credentials | None:
-    """Load existing OAuth token from file.
-
-    Note: This is deprecated. Use TokenStore with load_token_from_store instead.
-    """
-    if token_path.exists():
-        with open(token_path, "rb") as token_file:
-            return pickle.load(token_file)
-    return None
-
-
-def save_token(token_path: Path, credentials: Credentials) -> None:
-    """Save OAuth token to file.
-
-    Note: This is deprecated. Use TokenStore with save_token_to_store instead.
-    """
-    token_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(token_path, "wb") as token_file:
-        pickle.dump(credentials, token_file)
-
-
-def delete_token(token_path: Path) -> bool:
-    """Delete OAuth token file. Returns True if deleted, False if not found.
-
-    Note: This is deprecated. Use TokenStore with delete_token_from_store instead.
-    """
-    if token_path.exists():
-        token_path.unlink()
-        return True
-    return False
-
-
 # OAuth flow functions
 
 
-def _is_web_config(config: Path | dict) -> bool:
+def _is_web_config(config: Path | dict[str, Any]) -> bool:
     """Return True if the config describes a web OAuth client."""
     if isinstance(config, dict):
         normalized = normalize_client_config(config) if config else config
@@ -211,9 +176,10 @@ def _is_web_config(config: Path | dict) -> bool:
 
 
 def create_oauth_flow(
-    credentials: Path | dict,
+    credentials: Path | dict[str, Any],
     scopes: list[str],
     redirect_uri: str | None = None,
+    pkce: bool = True,
 ) -> Flow | InstalledAppFlow:
     """Create an OAuth flow without running it.
 
@@ -221,6 +187,7 @@ def create_oauth_flow(
         credentials: Path to client secrets file or in-memory client config dict.
         scopes: OAuth scopes to request.
         redirect_uri: Optional redirect URI.
+        pkce: If True (default), enable PKCE (RFC 7636) for the OAuth flow.
 
     Returns:
         A ``Flow`` (for web configs) or ``InstalledAppFlow`` (for installed configs).
@@ -240,15 +207,23 @@ def create_oauth_flow(
             )
     if redirect_uri:
         flow.redirect_uri = redirect_uri
+
+    # Enable PKCE (RFC 7636) — the Flow class handles code_verifier
+    # generation and code_challenge computation automatically.
+    if pkce:
+        flow.autogenerate_code_verifier = True
+
     return flow
 
 
 def get_auth_url(
-    credentials: Path | dict,
+    credentials: Path | dict[str, Any],
     scopes: list[str],
     redirect_uri: str = "urn:ietf:wg:oauth:2.0:oob",
 ) -> tuple[str, Flow | InstalledAppFlow, str]:
     """Get OAuth authorization URL without opening browser.
+
+    PKCE is enabled by default for all OAuth flows.
 
     Returns:
         Tuple of (authorization_url, flow, state). The flow is needed for
@@ -268,6 +243,9 @@ def exchange_code(
     code: str,
 ) -> Credentials:
     """Exchange authorization code for credentials.
+
+    If PKCE was enabled during flow creation, the code_verifier is
+    automatically included in the token exchange request.
 
     Persistence is the caller's responsibility.
 
@@ -303,49 +281,21 @@ def revoke_credentials(credentials: Credentials) -> bool:
         return False
 
     try:
-        response = requests.post(
-            "https://oauth2.googleapis.com/revoke",
-            params={"token": credentials.token},
+        params = urllib.parse.urlencode({"token": credentials.token})
+        url = f"https://oauth2.googleapis.com/revoke?{params}"
+        req = urllib.request.Request(
+            url,
+            method="POST",
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
-        return response.status_code == 200
+        with urllib.request.urlopen(req) as response:
+            return response.status == 200
     except Exception:
         return False
 
 
-def get_oauth_credentials(
-    credentials_path: Path,
-    token_path: Path,
-    scopes: list[str],
-    open_browser: bool = True,
-    port: int = 8080,
-) -> Credentials:
-    """Get OAuth credentials, refreshing or creating as needed.
-
-    Note: This is deprecated. Use get_oauth_credentials_from_store for multi-user support.
-    """
-    creds = load_token(token_path)
-
-    if creds and creds.expired and creds.refresh_token:
-        creds = refresh_credentials(creds)
-        save_token(token_path, creds)
-    elif not creds or not creds.valid:
-        if not open_browser:
-            raise AuthenticationError(
-                "No valid credentials and open_browser=False. "
-                "Use get_auth_url() and exchange_code() for manual flow."
-            )
-        flow = InstalledAppFlow.from_client_secrets_file(
-            str(credentials_path), scopes
-        )
-        creds = flow.run_local_server(port=port)
-        save_token(token_path, creds)
-
-    return creds
-
-
 def get_oauth_credentials_from_store(
-    credentials: Path | dict,
+    credentials: Path | dict[str, Any],
     token_store: TokenStore,
     user_id: str,
     scopes: list[str],
@@ -353,6 +303,8 @@ def get_oauth_credentials_from_store(
     port: int = 8080,
 ) -> Credentials:
     """Get OAuth credentials using a token store, refreshing or creating as needed.
+
+    PKCE is enabled by default for all new OAuth flows.
 
     Args:
         credentials: Path to OAuth client secrets file, or in-memory config dict.
@@ -388,6 +340,8 @@ def get_oauth_credentials_from_store(
             flow = InstalledAppFlow.from_client_secrets_file(
                 str(credentials), scopes
             )
+        # Enable PKCE for the installed app flow
+        flow.autogenerate_code_verifier = True
         creds = flow.run_local_server(port=port)
         save_token_to_store(token_store, user_id, creds)
 
@@ -395,11 +349,15 @@ def get_oauth_credentials_from_store(
 
 
 def get_service_account_credentials(
-    credentials_path: Path,
+    credentials_path: Path | None,
     scopes: list[str],
     subject: str | None = None,
 ) -> service_account.Credentials:
     """Get service account credentials."""
+    if credentials_path is None:
+        raise AuthenticationError(
+            "credentials_path is required for service account authentication"
+        )
     try:
         creds = service_account.Credentials.from_service_account_file(
             str(credentials_path), scopes=scopes
@@ -413,8 +371,10 @@ def get_service_account_credentials(
         )
 
 
-def get_service_account_info(credentials_path: Path) -> dict:
+def get_service_account_info(credentials_path: Path | None) -> dict[str, Any]:
     """Get service account info from credentials file."""
+    if credentials_path is None:
+        raise InvalidCredentialsError("No credentials path provided")
     try:
         with open(credentials_path) as f:
             return json.load(f)

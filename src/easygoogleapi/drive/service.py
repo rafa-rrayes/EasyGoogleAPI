@@ -362,8 +362,9 @@ class DriveService(BaseService):
         parent_id: str | None = None,
     ) -> dict[str, Any]:
         """Get an existing folder by name, or create it if it doesn't exist."""
+        safe_name = name.replace("\\", "\\\\").replace("'", "\\'")
         parts = [
-            f"name = '{name}'",
+            f"name = '{safe_name}'",
             "mimeType = 'application/vnd.google-apps.folder'",
             "trashed = false",
         ]
