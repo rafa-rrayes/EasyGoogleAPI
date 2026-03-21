@@ -1,6 +1,6 @@
 [project]
 name = "easygoogleapi"
-version = "1.0.0"
+version = "2.0.0"
 description = "A simplified Python interface for Google APIs"
 readme = "README.md"
 license = "MIT"
@@ -41,6 +41,8 @@ dependencies = [
 
 [project.optional-dependencies]
 meet = ["google-apps-meet>=0.1.0"]
+redis = ["redis>=4.0.0"]
+all = ["easygoogleapi[meet,redis]"]
 
 [project.urls]
 Homepage = "https://github.com/rafa-rrayes/easygoogleapi"

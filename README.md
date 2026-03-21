@@ -1,13 +1,18 @@
 # EasyGoogleAPI
 
-<!-- Badges -->
 [![PyPI version](https://img.shields.io/pypi/v/easygoogleapi)](https://pypi.org/project/easygoogleapi/)
 [![Python versions](https://img.shields.io/pypi/pyversions/easygoogleapi)](https://pypi.org/project/easygoogleapi/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A simplified Python interface for Google APIs. One class, seven services, zero boilerplate. Handles OAuth 2.0 and service account authentication, automatic retries with exponential backoff, multi-user token storage, and a structured exception hierarchy -- so you can focus on what you're building.
+A simplified Python interface for Google APIs. One class, seven services, typed responses, zero boilerplate.
+
+**Python 3.12+ required.**
 
 ## Quick Start
+
+```bash
+pip install easygoogleapi
+```
 
 ```python
 from easygoogleapi import GoogleService
@@ -17,127 +22,140 @@ google = GoogleService(
     services=["calendar", "drive", "gmail"],
 )
 
-# Start using Google APIs immediately
-events = google.calendar.list_events()
-google.drive.upload_file("report.pdf")
-google.gmail.send(to="team@company.com", subject="Report", body="See attached.")
+# Typed models with IDE autocompletion
+for event in google.calendar.list_events():
+    print(event.summary, event.start)
+
+# Auto-paginating iteration
+for file in google.drive.list_files():
+    print(file.name, file.mime_type)
+
+# Simple email sending
+google.gmail.send(to="user@example.com", subject="Hello", body="World")
 ```
 
-## Usage Examples
+## Features
 
-### Web Application (in-memory credentials)
+- **Typed response models** — `file.name`, not `file["name"]`. Full IDE autocompletion.
+- **Auto-pagination** — `for file in drive.list_files()` iterates across all pages automatically.
+- **Async support** — `AsyncGoogleService` for FastAPI and async frameworks.
+- **PKCE-secured OAuth** — RFC 7636 enabled by default on all flows.
+- **Scope presets** — `scope_preset="readonly"` for minimal permissions.
+- **Middleware hooks** — before/after request hooks with correlation IDs and timing.
+- **7 services** — Calendar, Drive, Gmail, Sheets, Docs, Forms, Meet.
+- **Automatic retries** — Exponential backoff with jitter for transient errors.
+- **Multi-user token storage** — Pluggable `TokenStore` interface with JSON file, in-memory, Django, and Redis backends.
+
+## Typed Models
+
+All service methods return typed dataclass models:
 
 ```python
-import os
-from easygoogleapi import GoogleService
+file = google.drive.get_file("file_id")
+print(file.name)           # str
+print(file.mime_type)       # str
+print(file.web_view_link)  # str | None
+print(file.to_dict())      # dict for serialization
+```
+
+## Auto-Pagination
+
+List methods return `PageIterator` — just iterate:
+
+```python
+# Automatically fetches all pages
+all_files = list(google.drive.list_files(query="mimeType='application/pdf'"))
+
+# Or iterate lazily
+for msg in google.gmail.list_messages(query="is:unread"):
+    print(msg.id, msg.snippet)
+
+# Single-page manual control when needed
+page = google.drive.list_files_page(page_size=10)
+print(page.files, page.next_page_token)
+```
+
+## Async Support
+
+```python
+from easygoogleapi import AsyncGoogleService
+
+async with AsyncGoogleService(
+    credentials_path="credentials.json",
+    services=["drive"],
+) as google:
+    page = await google.drive.list_files_page()
+    for file in page.files:
+        print(file.name)
+```
+
+## Scope Presets
+
+```python
+# Read-only access — safer for read-only apps
+google = GoogleService(
+    credentials_path="credentials.json",
+    services=["drive", "gmail"],
+    scope_preset="readonly",
+)
+```
+
+## Middleware
+
+```python
+from easygoogleapi import GoogleService, MiddlewareChain
+
+middleware = MiddlewareChain()
+
+@middleware.before_request
+def log_request(ctx):
+    print(f"[{ctx.correlation_id[:8]}] {ctx.service_name}.{ctx.method_name}")
+
+@middleware.after_request
+def log_response(ctx):
+    print(f"[{ctx.request.correlation_id[:8]}] {ctx.duration_ms:.0f}ms")
 
 google = GoogleService(
-    client_config={
-        "client_id": os.environ["GOOGLE_CLIENT_ID"],
-        "client_secret": os.environ["GOOGLE_CLIENT_SECRET"],
-    },
+    credentials_path="credentials.json",
     services=["drive"],
-    token_store=my_store,
-    user_id="user_123",
-    auto_auth=False,
+    middleware=middleware,
 )
-
-# Manual OAuth flow
-auth_url, state = google.get_auth_url(redirect_uri="https://myapp.com/callback")
-# ... redirect user, receive callback ...
-google.exchange_code(authorization_code)
-
-# Now use the API
-files = google.drive.list_files()
 ```
 
-### Service Account with Domain Delegation
+## Multi-User OAuth
 
 ```python
-google = GoogleService.for_service_account(
-    credentials_path="service_account.json",
-    services=["drive", "sheets"],
-    impersonate_user="user@yourdomain.com",
-)
+from easygoogleapi import GoogleService, FileTokenStore
 
-files = google.drive.list_files()
-```
-
-### Multi-User with Token Store
-
-```python
-from easygoogleapi import GoogleService
-from easygoogleapi.contrib.django import DjangoModelTokenStore
-
-store = DjangoModelTokenStore(model=OAuthToken)
+store = FileTokenStore(Path("./tokens"))
 
 google = GoogleService.for_user(
-    user_id=str(request.user.id),
+    user_id="user_123",
     token_store=store,
     credentials_path="oauth_client.json",
     services=["calendar", "gmail"],
 )
-
-events = google.calendar.list_events()
 ```
 
-### Error Handling
+## Service Account
 
 ```python
-from easygoogleapi import TokenRevokedError, NotFoundError, RateLimitError
-
-try:
-    google.drive.get_file("file_id")
-except TokenRevokedError:
-    # User must re-authenticate
-    pass
-except NotFoundError:
-    # File doesn't exist
-    pass
-except RateLimitError as e:
-    # Raised only after all automatic retries are exhausted
-    print(f"Retry after {e.retry_after}s")
+google = GoogleService.for_service_account(
+    credentials_path="service_account.json",
+    services=["drive"],
+    impersonate_user="user@domain.com",
+)
 ```
 
-## Supported Services
+## Escape Hatch
 
-| Service | Property | Key Methods |
-|---------|----------|-------------|
-| Calendar | `google.calendar` | `list_events`, `create_event`, `update_event`, `delete_event` |
-| Drive | `google.drive` | `list_files`, `upload_file`, `download_file`, `share_file` |
-| Gmail | `google.gmail` | `send`, `list_messages`, `get_message` |
-| Sheets | `google.sheets` | `read_range`, `write_range`, `append_rows`, `create_spreadsheet` |
-| Docs | `google.docs` | `get_document`, `create_document`, `insert_text`, `replace_text` |
-| Forms | `google.forms` | `get_form`, `list_responses`, `create_form` |
-| Meet | `google.meet` | `create_space`, `get_space`, `end_active_conference` |
+Every service exposes `.raw` for direct access to the underlying Google API resource:
 
-## Features
-
-- **Flexible authentication** -- OAuth 2.0 (file-based or in-memory client config) and service accounts, auto-detected
-- **Multi-user support** -- Per-user OAuth tokens with pluggable storage backends (`FileTokenStore`, `JSONFileTokenStore`, `InMemoryTokenStore`, `DjangoModelTokenStore`)
-- **Automatic retries** -- Exponential backoff with jitter for rate limits (429) and server errors (5xx)
-- **Structured exceptions** -- `RateLimitError`, `NotFoundError`, `TokenRevokedError`, `QuotaExceededError`, and more
-- **Lazy loading** -- Services initialize only when accessed
-- **Type hints** -- Full typing with `py.typed` marker
-- **Raw access** -- `.raw` property on every service for direct Google API client access
-
-## Documentation
-
-Full documentation is in the [`/docs`](docs/) folder:
-
-- [Overview & Quickstart](docs/index.md)
-- [Authentication Guide](docs/authentication.md)
-- [Token Storage](docs/token-stores.md)
-- [Error Handling](docs/error-handling.md)
-- [Migration from v0.2.0](docs/migration.md)
-- **Services:** [Drive](docs/services/drive.md) | [Calendar](docs/services/calendar.md) | [Gmail](docs/services/gmail.md) | [Sheets](docs/services/sheets.md) | [Forms](docs/services/forms.md) | [Meet](docs/services/meet.md) | [Docs](docs/services/docs.md)
-
-## Requirements
-
-- Python 3.12+
-- Google Cloud project with enabled APIs
-- OAuth 2.0 credentials or service account key
+```python
+# When you need something not wrapped by EasyGoogleAPI
+raw_result = google.drive.raw.files().list(q="trashed=true").execute()
+```
 
 ## License
 
-[MIT](LICENSE)
+MIT
