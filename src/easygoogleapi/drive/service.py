@@ -7,6 +7,7 @@ from typing import Any, BinaryIO
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload, MediaIoBaseUpload
 
 from .._base import BaseService
+from .models import FileList, FileMetadata, Permission, StorageQuota
 
 # Mapping from Google Workspace MIME types to export formats
 EXPORT_MIME_TYPES: dict[str, str] = {
@@ -38,22 +39,18 @@ class DriveService(BaseService):
     def list_files(
         self,
         query: str | None = None,
-        page_size: int = 10,
-        fields: str = "files(id, name, mimeType, modifiedTime)",
+        page_size: int = 100,
+        fields: str = "files(id, name, mimeType, modifiedTime, size, webViewLink, parents, trashed)",
         folder_id: str | None = None,
         page_token: str | None = None,
         order_by: str | None = None,
-    ) -> dict[str, Any]:
-        """List files in Drive.
-
-        Returns a dict with ``files`` and ``nextPageToken`` keys.
-        """
+    ) -> FileList:
+        """List files in Drive. Returns a FileList with typed FileMetadata objects."""
         kwargs: dict[str, Any] = {
             "pageSize": page_size,
             "fields": f"nextPageToken, {fields}",
         }
 
-        # Build query
         parts: list[str] = []
         if query:
             parts.append(query)
@@ -69,10 +66,7 @@ class DriveService(BaseService):
 
         request = self._resource.files().list(**kwargs)
         result = self._execute_request(request)
-        return {
-            "files": result.get("files", []),
-            "nextPageToken": result.get("nextPageToken"),
-        }
+        return FileList.from_api_response(result)
 
     # ------------------------------------------------------------------
     # Get / Upload / Download
@@ -81,11 +75,12 @@ class DriveService(BaseService):
     def get_file(
         self,
         file_id: str,
-        fields: str = "id, name, mimeType, modifiedTime, size, webViewLink",
-    ) -> dict[str, Any]:
+        fields: str = "id, name, mimeType, modifiedTime, size, webViewLink, parents, trashed",
+    ) -> FileMetadata:
         """Get file metadata."""
         request = self._resource.files().get(fileId=file_id, fields=fields)
-        return self._execute_request(request)
+        result = self._execute_request(request)
+        return FileMetadata.from_api_response(result)
 
     def upload_file(
         self,
@@ -96,11 +91,8 @@ class DriveService(BaseService):
         description: str | None = None,
         fields: str = "id, name, webViewLink",
         resumable: bool = True,
-    ) -> dict[str, Any]:
-        """Upload a file to Drive.
-
-        ``file`` can be a filesystem path, an open binary stream, or raw bytes.
-        """
+    ) -> FileMetadata:
+        """Upload a file to Drive."""
         if isinstance(file, (str, Path)):
             file_path = Path(file)
             file_name = name or file_path.name
@@ -115,7 +107,6 @@ class DriveService(BaseService):
                 resumable=resumable,
             )
         else:
-            # BinaryIO / file-like
             file_name = name or getattr(file, "name", "untitled")
             media = MediaIoBaseUpload(
                 file,
@@ -132,29 +123,21 @@ class DriveService(BaseService):
         request = self._resource.files().create(
             body=file_metadata, media_body=media, fields=fields
         )
-        return self._execute_request(request)
+        result = self._execute_request(request)
+        return FileMetadata.from_api_response(result)
 
-    def download_file(
-        self,
-        file_id: str,
-        destination: str | Path | None = None,
+    def _download_to(
+        self, request: Any, destination: str | Path | None = None
     ) -> Path | bytes:
-        """Download a file from Drive.
-
-        If *destination* is provided the file is written to disk and the
-        ``Path`` is returned.  Otherwise the file content is returned as
-        ``bytes``.
-        """
-        request = self._resource.files().get_media(fileId=file_id)
-
+        """Download content from a request to disk or memory."""
         if destination is not None:
-            destination = Path(destination)
-            with open(destination, "wb") as f:
+            dest = Path(destination)
+            with open(dest, "wb") as f:
                 downloader = MediaIoBaseDownload(f, request)
                 done = False
                 while not done:
                     _, done = downloader.next_chunk()
-            return destination
+            return dest
 
         buf = io.BytesIO()
         downloader = MediaIoBaseDownload(buf, request)
@@ -162,6 +145,15 @@ class DriveService(BaseService):
         while not done:
             _, done = downloader.next_chunk()
         return buf.getvalue()
+
+    def download_file(
+        self,
+        file_id: str,
+        destination: str | Path | None = None,
+    ) -> Path | bytes:
+        """Download a file from Drive."""
+        request = self._resource.files().get_media(fileId=file_id)
+        return self._download_to(request, destination)
 
     # ------------------------------------------------------------------
     # Update / Copy / Move
@@ -175,7 +167,7 @@ class DriveService(BaseService):
         description: str | None = None,
         mime_type: str | None = None,
         fields: str = "id, name, modifiedTime",
-    ) -> dict[str, Any]:
+    ) -> FileMetadata:
         """Update a file's content and/or metadata."""
         body: dict[str, Any] = {}
         if new_name:
@@ -205,7 +197,8 @@ class DriveService(BaseService):
             kwargs["media_body"] = media
 
         request = self._resource.files().update(**kwargs)
-        return self._execute_request(request)
+        result = self._execute_request(request)
+        return FileMetadata.from_api_response(result)
 
     def copy_file(
         self,
@@ -213,7 +206,7 @@ class DriveService(BaseService):
         name: str | None = None,
         folder_id: str | None = None,
         fields: str = "id, name, webViewLink",
-    ) -> dict[str, Any]:
+    ) -> FileMetadata:
         """Copy a file."""
         body: dict[str, Any] = {}
         if name:
@@ -223,16 +216,16 @@ class DriveService(BaseService):
         request = self._resource.files().copy(
             fileId=file_id, body=body, fields=fields
         )
-        return self._execute_request(request)
+        result = self._execute_request(request)
+        return FileMetadata.from_api_response(result)
 
     def move_file(
         self,
         file_id: str,
         new_parent_id: str,
         fields: str = "id, name, parents",
-    ) -> dict[str, Any]:
+    ) -> FileMetadata:
         """Move a file to a different folder."""
-        # Get current parents
         current = self._execute_request(
             self._resource.files().get(fileId=file_id, fields="parents")
         )
@@ -244,36 +237,36 @@ class DriveService(BaseService):
             removeParents=previous_parents,
             fields=fields,
         )
-        return self._execute_request(request)
+        result = self._execute_request(request)
+        return FileMetadata.from_api_response(result)
 
     # ------------------------------------------------------------------
     # Delete / Trash
     # ------------------------------------------------------------------
 
     def delete_file(self, file_id: str, permanent: bool = True) -> None:
-        """Delete a file from Drive.
-
-        If *permanent* is ``False`` the file is moved to trash instead.
-        """
+        """Delete a file from Drive."""
         if permanent:
             request = self._resource.files().delete(fileId=file_id)
             self._execute_request(request)
         else:
             self.trash_file(file_id)
 
-    def trash_file(self, file_id: str) -> dict[str, Any]:
+    def trash_file(self, file_id: str) -> FileMetadata:
         """Move a file to the trash."""
         request = self._resource.files().update(
             fileId=file_id, body={"trashed": True}, fields="id, name, trashed"
         )
-        return self._execute_request(request)
+        result = self._execute_request(request)
+        return FileMetadata.from_api_response(result)
 
-    def restore_file(self, file_id: str) -> dict[str, Any]:
+    def restore_file(self, file_id: str) -> FileMetadata:
         """Restore a file from the trash."""
         request = self._resource.files().update(
             fileId=file_id, body={"trashed": False}, fields="id, name, trashed"
         )
-        return self._execute_request(request)
+        result = self._execute_request(request)
+        return FileMetadata.from_api_response(result)
 
     def empty_trash(self) -> None:
         """Permanently delete all files in the trash."""
@@ -290,16 +283,8 @@ class DriveService(BaseService):
         email: str,
         role: str = "reader",
         send_notification: bool = True,
-    ) -> dict[str, Any]:
-        """Share a file with a specific user.
-
-        Args:
-            file_id: The file to share.
-            email: Email address of the user to share with.
-            role: Permission role (``reader``, ``commenter``, ``writer``,
-                ``organizer``).
-            send_notification: Whether to send an email notification.
-        """
+    ) -> Permission:
+        """Share a file with a specific user."""
         body = {"type": "user", "role": role, "emailAddress": email}
         request = self._resource.permissions().create(
             fileId=file_id,
@@ -307,27 +292,32 @@ class DriveService(BaseService):
             sendNotificationEmail=send_notification,
             fields="id, role, emailAddress",
         )
-        return self._execute_request(request)
+        result = self._execute_request(request)
+        return Permission.from_api_response(result)
 
     def share_file_public(
         self,
         file_id: str,
         role: str = "reader",
-    ) -> dict[str, Any]:
+    ) -> Permission:
         """Make a file publicly accessible."""
         body = {"type": "anyone", "role": role}
         request = self._resource.permissions().create(
             fileId=file_id, body=body, fields="id, role"
         )
-        return self._execute_request(request)
+        result = self._execute_request(request)
+        return Permission.from_api_response(result)
 
-    def list_permissions(self, file_id: str) -> list[dict[str, Any]]:
+    def list_permissions(self, file_id: str) -> list[Permission]:
         """List permissions on a file."""
         request = self._resource.permissions().list(
             fileId=file_id, fields="permissions(id, role, type, emailAddress)"
         )
         result = self._execute_request(request)
-        return result.get("permissions", [])
+        return [
+            Permission.from_api_response(p)
+            for p in result.get("permissions", [])
+        ]
 
     def remove_permission(self, file_id: str, permission_id: str) -> None:
         """Remove a permission from a file."""
@@ -342,7 +332,7 @@ class DriveService(BaseService):
 
     def create_folder(
         self, name: str, parent_id: str | None = None
-    ) -> dict[str, Any]:
+    ) -> FileMetadata:
         """Create a folder in Drive."""
         file_metadata: dict[str, Any] = {
             "name": name,
@@ -354,13 +344,14 @@ class DriveService(BaseService):
         request = self._resource.files().create(
             body=file_metadata, fields="id, name"
         )
-        return self._execute_request(request)
+        result = self._execute_request(request)
+        return FileMetadata.from_api_response(result)
 
     def get_or_create_folder(
         self,
         name: str,
         parent_id: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> FileMetadata:
         """Get an existing folder by name, or create it if it doesn't exist."""
         safe_name = name.replace("\\", "\\\\").replace("'", "\\'")
         parts = [
@@ -380,11 +371,11 @@ class DriveService(BaseService):
         )
         files = result.get("files", [])
         if files:
-            return files[0]
+            return FileMetadata.from_api_response(files[0])
         return self.create_folder(name, parent_id)
 
     # ------------------------------------------------------------------
-    # Export (Google Workspace → other formats)
+    # Export
     # ------------------------------------------------------------------
 
     def export_file(
@@ -393,44 +384,19 @@ class DriveService(BaseService):
         mime_type: str,
         destination: str | Path | None = None,
     ) -> Path | bytes:
-        """Export a Google Workspace file to the specified MIME type.
-
-        ``mime_type`` can be a full MIME string (e.g. ``"application/pdf"``)
-        or a short alias defined in ``EXPORT_MIME_TYPES`` (e.g. ``"pdf"``).
-        """
+        """Export a Google Workspace file to the specified MIME type."""
         resolved_mime = EXPORT_MIME_TYPES.get(mime_type, mime_type)
         request = self._resource.files().export_media(
             fileId=file_id, mimeType=resolved_mime
         )
-
-        if destination is not None:
-            destination = Path(destination)
-            with open(destination, "wb") as f:
-                downloader = MediaIoBaseDownload(f, request)
-                done = False
-                while not done:
-                    _, done = downloader.next_chunk()
-            return destination
-
-        buf = io.BytesIO()
-        downloader = MediaIoBaseDownload(buf, request)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-        return buf.getvalue()
+        return self._download_to(request, destination)
 
     # ------------------------------------------------------------------
     # Quota
     # ------------------------------------------------------------------
 
-    def get_storage_quota(self) -> dict[str, Any]:
-        """Get Drive storage quota information.
-
-        Returns a dict with ``limit``, ``usage``, ``usageInDrive``,
-        ``usageInDriveTrash`` (all in bytes as strings).
-        """
-        request = self._resource.about().get(
-            fields="storageQuota"
-        )
+    def get_storage_quota(self) -> StorageQuota:
+        """Get Drive storage quota information."""
+        request = self._resource.about().get(fields="storageQuota")
         result = self._execute_request(request)
-        return result.get("storageQuota", {})
+        return StorageQuota.from_api_response(result.get("storageQuota", {}))

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .._base import BaseService
+from .models import Label, Message, MessageList, Thread
 
 
 class GmailService(BaseService):
@@ -26,21 +27,8 @@ class GmailService(BaseService):
         attachments: list[str | Path] | None = None,
         from_name: str | None = None,
         reply_to: str | None = None,
-    ) -> dict[str, Any]:
-        """Send an email.
-
-        Args:
-            to: Recipient email address(es).
-            subject: Email subject line.
-            body: Email body text (plain or HTML).
-            html: If ``True``, *body* is treated as HTML.
-            cc: CC recipient(s).
-            bcc: BCC recipient(s).
-            attachments: List of file paths to attach.
-            from_name: Display name for the ``From`` header (e.g. ``"My App"``).
-                The email address is filled automatically by Gmail.
-            reply_to: ``Reply-To`` address.
-        """
+    ) -> Message:
+        """Send an email."""
         if isinstance(to, list):
             to = ", ".join(to)
 
@@ -71,8 +59,6 @@ class GmailService(BaseService):
         if bcc:
             message["bcc"] = bcc if isinstance(bcc, str) else ", ".join(bcc)
         if from_name:
-            # formataddr expects (name, address).  We leave address blank so
-            # Gmail fills the authenticated sender address automatically.
             message["from"] = formataddr((from_name, ""))
         if reply_to:
             message["reply-to"] = reply_to
@@ -81,19 +67,17 @@ class GmailService(BaseService):
         request = self._resource.users().messages().send(
             userId="me", body={"raw": raw}
         )
-        return self._execute_request(request)
+        result = self._execute_request(request)
+        return Message.from_api_response(result)
 
     def list_messages(
         self,
         query: str | None = None,
         label_ids: list[str] | None = None,
-        max_results: int = 10,
+        max_results: int = 100,
         page_token: str | None = None,
-    ) -> dict[str, Any]:
-        """List messages matching criteria.
-
-        Returns a dict with ``messages`` and ``nextPageToken`` keys.
-        """
+    ) -> MessageList:
+        """List messages matching criteria."""
         kwargs: dict[str, Any] = {"userId": "me", "maxResults": max_results}
         if query:
             kwargs["q"] = query
@@ -104,40 +88,39 @@ class GmailService(BaseService):
 
         request = self._resource.users().messages().list(**kwargs)
         result = self._execute_request(request)
-        return {
-            "messages": result.get("messages", []),
-            "nextPageToken": result.get("nextPageToken"),
-        }
+        return MessageList.from_api_response(result)
 
     def get_message(
         self, message_id: str, format: str = "full"
-    ) -> dict[str, Any]:
+    ) -> Message:
         """Get a specific message by ID."""
         request = self._resource.users().messages().get(
             userId="me", id=message_id, format=format
         )
-        return self._execute_request(request)
+        result = self._execute_request(request)
+        return Message.from_api_response(result)
 
-    def list_labels(self) -> list[dict[str, Any]]:
+    def list_labels(self) -> list[Label]:
         """List all labels."""
         request = self._resource.users().labels().list(userId="me")
         result = self._execute_request(request)
-        return result.get("labels", [])
+        return [Label.from_api_response(l) for l in result.get("labels", [])]
 
-    def trash_message(self, message_id: str) -> dict[str, Any]:
+    def trash_message(self, message_id: str) -> Message:
         """Move a message to trash."""
         request = self._resource.users().messages().trash(
             userId="me", id=message_id
         )
-        return self._execute_request(request)
+        result = self._execute_request(request)
+        return Message.from_api_response(result)
 
     def modify_message(
         self,
         message_id: str,
         add_labels: list[str] | None = None,
         remove_labels: list[str] | None = None,
-    ) -> dict[str, Any]:
-        """Modify labels on a message (e.g. mark read/unread)."""
+    ) -> Message:
+        """Modify labels on a message."""
         body: dict[str, Any] = {}
         if add_labels:
             body["addLabelIds"] = add_labels
@@ -146,13 +129,15 @@ class GmailService(BaseService):
         request = self._resource.users().messages().modify(
             userId="me", id=message_id, body=body
         )
-        return self._execute_request(request)
+        result = self._execute_request(request)
+        return Message.from_api_response(result)
 
     def get_thread(
         self, thread_id: str, format: str = "full"
-    ) -> dict[str, Any]:
+    ) -> Thread:
         """Get a thread (all messages in a conversation)."""
         request = self._resource.users().threads().get(
             userId="me", id=thread_id, format=format
         )
-        return self._execute_request(request)
+        result = self._execute_request(request)
+        return Thread.from_api_response(result)
