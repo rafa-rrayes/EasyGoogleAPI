@@ -7,6 +7,7 @@ from typing import Any, BinaryIO
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload, MediaIoBaseUpload
 
 from .._base import BaseService
+from .._pagination import PageIterator
 from .models import FileList, FileMetadata, Permission, StorageQuota
 
 # Mapping from Google Workspace MIME types to export formats
@@ -42,15 +43,53 @@ class DriveService(BaseService):
         page_size: int = 100,
         fields: str = "files(id, name, mimeType, modifiedTime, size, webViewLink, parents, trashed)",
         folder_id: str | None = None,
+        order_by: str | None = None,
+    ) -> PageIterator[FileMetadata]:
+        """List files in Drive with automatic pagination.
+
+        Returns a ``PageIterator`` that yields ``FileMetadata`` objects
+        across all pages::
+
+            for file in google.drive.list_files():
+                print(file.name)
+
+        For manual single-page control, use ``list_files_page()``.
+        """
+        def fetch_page(page_token: str | None) -> dict[str, Any]:
+            kwargs: dict[str, Any] = {
+                "pageSize": page_size,
+                "fields": f"nextPageToken, {fields}",
+            }
+            parts: list[str] = []
+            if query:
+                parts.append(query)
+            if folder_id:
+                parts.append(f"'{folder_id}' in parents")
+            if parts:
+                kwargs["q"] = " and ".join(parts)
+            if page_token:
+                kwargs["pageToken"] = page_token
+            if order_by:
+                kwargs["orderBy"] = order_by
+            request = self._resource.files().list(**kwargs)
+            return self._execute_request(request)
+
+        return PageIterator(fetch_page, items_key="files", model_class=FileMetadata)
+
+    def list_files_page(
+        self,
+        query: str | None = None,
+        page_size: int = 100,
+        fields: str = "files(id, name, mimeType, modifiedTime, size, webViewLink, parents, trashed)",
+        folder_id: str | None = None,
         page_token: str | None = None,
         order_by: str | None = None,
     ) -> FileList:
-        """List files in Drive. Returns a FileList with typed FileMetadata objects."""
+        """List a single page of files. Returns a FileList with next_page_token."""
         kwargs: dict[str, Any] = {
             "pageSize": page_size,
             "fields": f"nextPageToken, {fields}",
         }
-
         parts: list[str] = []
         if query:
             parts.append(query)
@@ -58,7 +97,6 @@ class DriveService(BaseService):
             parts.append(f"'{folder_id}' in parents")
         if parts:
             kwargs["q"] = " and ".join(parts)
-
         if page_token:
             kwargs["pageToken"] = page_token
         if order_by:

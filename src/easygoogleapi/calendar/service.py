@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timezone
 from typing import Any
 
 from .._base import BaseService
+from .._pagination import PageIterator
 from .models import CalendarMeta, Event, EventList
 
 
@@ -85,9 +86,44 @@ class CalendarService(BaseService):
         max_results: int = 250,
         single_events: bool = True,
         order_by: str = "startTime",
+    ) -> PageIterator[Event]:
+        """List events with automatic pagination.
+
+        Returns a ``PageIterator`` that yields ``Event`` objects::
+
+            for event in google.calendar.list_events():
+                print(event.summary)
+        """
+        effective_time_min = time_min or datetime.now(UTC)
+
+        def fetch_page(page_token: str | None) -> dict[str, Any]:
+            kwargs: dict[str, Any] = {
+                "calendarId": calendar_id,
+                "timeMin": _to_rfc3339(effective_time_min),
+                "maxResults": max_results,
+                "singleEvents": single_events,
+                "orderBy": order_by,
+            }
+            if time_max:
+                kwargs["timeMax"] = _to_rfc3339(time_max)
+            if page_token:
+                kwargs["pageToken"] = page_token
+            request = self._resource.events().list(**kwargs)
+            return self._execute_request(request)
+
+        return PageIterator(fetch_page, items_key="items", model_class=Event)
+
+    def list_events_page(
+        self,
+        calendar_id: str = "primary",
+        time_min: datetime | None = None,
+        time_max: datetime | None = None,
+        max_results: int = 250,
+        single_events: bool = True,
+        order_by: str = "startTime",
         page_token: str | None = None,
     ) -> EventList:
-        """List events from a calendar. Returns EventList with typed Event objects."""
+        """List a single page of events."""
         if time_min is None:
             time_min = datetime.now(UTC)
 

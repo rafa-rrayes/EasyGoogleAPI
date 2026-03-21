@@ -3,6 +3,7 @@
 from typing import Any
 
 from .._base import BaseService
+from .._pagination import PageIterator
 from .models import BatchUpdateResponse, Form, FormResponse, FormResponseList
 
 
@@ -19,13 +20,27 @@ class FormsService(BaseService):
         self,
         form_id: str,
         page_size: int = 50,
+    ) -> PageIterator[FormResponse]:
+        """List form responses with automatic pagination."""
+        def fetch_page(page_token: str | None) -> dict[str, Any]:
+            kwargs: dict[str, Any] = {"formId": form_id, "pageSize": page_size}
+            if page_token:
+                kwargs["pageToken"] = page_token
+            request = self._resource.forms().responses().list(**kwargs)
+            return self._execute_request(request)
+
+        return PageIterator(fetch_page, items_key="responses", model_class=FormResponse)
+
+    def list_responses_page(
+        self,
+        form_id: str,
+        page_size: int = 50,
         page_token: str | None = None,
     ) -> FormResponseList:
-        """List form responses with pagination."""
+        """List a single page of form responses."""
         kwargs: dict[str, Any] = {"formId": form_id, "pageSize": page_size}
         if page_token:
             kwargs["pageToken"] = page_token
-
         request = self._resource.forms().responses().list(**kwargs)
         result = self._execute_request(request)
         return FormResponseList.from_api_response(result)

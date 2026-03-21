@@ -1,6 +1,7 @@
 """EasyGoogleAPI — Simplified Python interface for Google APIs."""
 
 from ._base import RetryConfig
+from ._pagination import PageIterator
 from ._exceptions import (
     APIError,
     AuthenticationError,
@@ -65,6 +66,7 @@ __all__ = [
     "ConflictError",
     "MaxRetriesExceededError",
     "RetryConfig",
+    "PageIterator",
     "CredentialType",
     "ServiceName",
 ]

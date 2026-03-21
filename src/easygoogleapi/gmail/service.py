@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .._base import BaseService
+from .._pagination import PageIterator
 from .models import Label, Message, MessageList, Thread
 
 
@@ -75,9 +76,35 @@ class GmailService(BaseService):
         query: str | None = None,
         label_ids: list[str] | None = None,
         max_results: int = 100,
+    ) -> PageIterator[Message]:
+        """List messages with automatic pagination.
+
+        Returns a ``PageIterator`` that yields ``Message`` objects::
+
+            for msg in google.gmail.list_messages(query="is:unread"):
+                print(msg.id)
+        """
+        def fetch_page(page_token: str | None) -> dict[str, Any]:
+            kwargs: dict[str, Any] = {"userId": "me", "maxResults": max_results}
+            if query:
+                kwargs["q"] = query
+            if label_ids:
+                kwargs["labelIds"] = label_ids
+            if page_token:
+                kwargs["pageToken"] = page_token
+            request = self._resource.users().messages().list(**kwargs)
+            return self._execute_request(request)
+
+        return PageIterator(fetch_page, items_key="messages", model_class=Message)
+
+    def list_messages_page(
+        self,
+        query: str | None = None,
+        label_ids: list[str] | None = None,
+        max_results: int = 100,
         page_token: str | None = None,
     ) -> MessageList:
-        """List messages matching criteria."""
+        """List a single page of messages."""
         kwargs: dict[str, Any] = {"userId": "me", "maxResults": max_results}
         if query:
             kwargs["q"] = query
